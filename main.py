@@ -7,7 +7,7 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
-N = 30
+N = 100
 TRIALS = 1_000
 MAX_NUMBER_STEPS = 100_000_000
 
@@ -37,12 +37,13 @@ def num_steps_til_absorption(population: Moran) -> int:
 
 if __name__ == '__main__':
   avgs = []
-  ns = list(range(2, N+1))
+  ns = [int(x) for x in np.linspace(start=10, stop=N, num=10)]
+  print(ns)
   for n in ns:
     all_steps = []
     for _ in range(TRIALS):
       G = generate_graph(n=n)
-      population = Moran(graph=G, r=1)
+      population = Moran(graph=G, r=1.5)
       steps = num_steps_til_absorption(population)
       all_steps.append(steps)
 
