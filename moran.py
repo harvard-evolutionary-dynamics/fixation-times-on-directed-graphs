@@ -12,9 +12,8 @@ from typing import Final, Generator, Dict, Set, List
 
 
 class Type(Enum):
-  WILD = "wild"
-  MUTANT = "mutant"
-
+  WILD = 0
+  MUTANT = 1
 
 class Moran:
   """
@@ -52,7 +51,7 @@ class Moran:
   def evolve(self, steps: int) -> Generator[Moran]:
     for _ in range(steps):
       # self._step()
-      self._unoptimized_step()
+      self._step()
       yield self
 
   def _step(self) -> None:
