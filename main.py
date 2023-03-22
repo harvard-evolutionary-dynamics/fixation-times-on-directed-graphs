@@ -4,12 +4,24 @@ from moran import Moran, Type
 from stats import proportion_of_mutants, is_absorbed
 from decimal import Decimal
 import numpy as np
+from typing import List, Set, Tuple, Dict
 
 import matplotlib.pyplot as plt
 
 N = 100
-TRIALS = 1_000
+TRIALS = 10_000
 MAX_NUMBER_STEPS = 100_000_000
+
+def random_node_label(n: int) -> int:
+  return random.randint(0, n-1)
+
+def initialize_types(G: nx.Graph) -> None:
+  n = len(G)
+  for idx in range(n):
+    G.nodes()[idx][Moran.TYPE_ATTRIBUTE_NAME] = Type.WILD
+
+  G.nodes()[random_node_label(n)][Moran.TYPE_ATTRIBUTE_NAME] = Type.MUTANT
+
 
 def generate_undirected_gnp_graph(n: int, p: Decimal = 1/2) -> nx.Graph:
   G = nx.DiGraph()
@@ -20,11 +32,7 @@ def generate_undirected_gnp_graph(n: int, p: Decimal = 1/2) -> nx.Graph:
   # for idx in range(N-1):
   #   G.add_edge(idx, idx+1)
 
-  for idx in range(n):
-    G.nodes()[idx][Moran.TYPE_ATTRIBUTE_NAME] = Type.WILD
-
-  G.nodes()[random.randint(0, n-1)][Moran.TYPE_ATTRIBUTE_NAME] = Type.MUTANT
-
+  initialize_types(G)
   return G
 
 def generate_directed_gnp_graph(n: int, p: Decimal = 1/2) -> nx.Graph:
@@ -47,9 +55,44 @@ def generate_directed_gnp_graph(n: int, p: Decimal = 1/2) -> nx.Graph:
 
   return G
 
+def generate_random_cycle_labels(n: int) -> List[Tuple[int, int]]:
+  cycle: List[Tuple[int, int]] = []
+
+  u = random_node_label(n)
+  seen: Dict[int, int] = {u: 0}
+  while (v := random_node_label(n)) not in seen:
+    cycle.append((u, v))
+    seen[v] = len(cycle)
+    u = v
+  cycle.append((u, v))
+  return cycle[seen[v]:]
+
+def density(G: nx.DiGraph) -> Decimal:
+  N = len(G)
+  MAX_EDGES = N**2
+  return G.number_of_edges() / Decimal(MAX_EDGES)
+
+def generate_eulerian_graph(n: int, rho: Decimal = 1/2) -> nx.Graph:
+  """`rho` is the lower bound of how dense the graph needs to be."""
+  G = nx.DiGraph()
+  for idx in range(n):
+    G.add_node(idx)
+  while not G or not nx.is_weakly_connected(G) or density(G) < rho:
+    cycle_labels: List[int] = generate_random_cycle_labels(n)
+    # print(cycle_labels)
+    assert (cycle_labels[0][0] ==cycle_labels[-1][-1]), cycle_labels
+    for u, v in cycle_labels:
+      G.add_edge(u, v)
+    
+  # print("=======================")
+  initialize_types(G)
+  return G
+    
+
 
 def normalized_balance(G: nx.DiGraph) -> Decimal:
   """skew of out degree - in degree"""
+  return 1
   # print(G.out_degree(0), G.in_degree(0), G.nodes)
   std = Decimal(np.std([G.out_degree(node) - G.in_degree(node) for node in G.nodes]))
   return sum(
@@ -73,46 +116,60 @@ if __name__ == '__main__':
   for n in ns:
     all_steps = []
     all_balances = []
-    slow_outlier, outlier_step, outlier_balance = None, 0, 0
+    slow_outlier, slow_outlier_step = None, 0
+    fast_outlier, fast_outlier_step = None, 9999999999999999999
     for _ in range(TRIALS):
-      G = generate_directed_gnp_graph(n=n)
-      population = Moran(graph=G, r=1.5)
+      # G = generate_directed_gnp_graph(n=n)
+      G = generate_eulerian_graph(n, rho=1/10)
+      population = Moran(graph=G, r=10)
       initial_graph = G.copy()
       steps = num_steps_til_absorption(population)
       all_steps.append(steps)
       balance = normalized_balance(population.graph)
       all_balances.append(balance)
-      if steps > outlier_step:
+      if steps > slow_outlier_step:
         slow_outlier = initial_graph
-        outlier_step = steps
-        outlier_balance = balance
+        slow_outlier_step = steps
+        slow_outlier_balance = balance
+      if proportion_of_mutants(population.graph) == 1 and steps < fast_outlier_step:
+        fast_outlier = initial_graph
+        fast_outlier_step = steps
+        fast_outlier_balance = balance
 
     avg_step = np.mean(all_steps)
     std_step = np.std(all_steps)
     avg_steps.append(avg_steps)
 
-    avg_balance = np.mean(all_balances)
-    std_balance = np.std(all_balances)
-    avg_balances.append(avg_balance)
+    # avg_balance = np.mean(all_balances)
+    # std_balance = np.std(all_balances)
+    # avg_balances.append(avg_balance)
 
-    print(f"{avg_step=}, {std_step=}, {outlier_step=}")
-    print(f"{avg_balance=}, {std_balance=}, {outlier_balance=}")
+    print(f"{avg_step=}, {std_step=}, {fast_outlier_step=}, {slow_outlier_step=}")
+    # print(f"{avg_balance=}, {std_balance=}, {slow_outlier_balance=}")
 
-    nx.draw(
-      G=slow_outlier,
-      node_color=[['blue', 'red'][data['type'].value] for _, data in slow_outlier.nodes(data=True)],
-      with_labels=True, 
-      labels={
-        node: f"{slow_outlier.in_degree(node)} --> {node} --> {slow_outlier.out_degree(node)}" 
-        for node in slow_outlier.nodes
-      },
-    )
-    plt.show()
-    input()
-    plt.scatter([n]*len(all_steps), all_steps)
+    for example in (slow_outlier, fast_outlier):
+      nx.draw(
+        G=example,
+        # pos=nx.spectral_layout(example),
+        pos=nx.kamada_kawai_layout(example),
+        node_color=[['blue', 'red'][data['type'].value] for _, data in example.nodes(data=True)],
+        with_labels=True, 
+        font_size=6,
+        labels={
+          # node: f"{example.in_degree(node)} --> {node} --> {slow_outlier.out_degree(node)}" 
+          node: f"d{example.in_degree(node)}" 
+          # node: f"{node}"
+          for node in example.nodes
+        },
+      )
+      plt.show()
+      plt.clf()
+      plt.cla()
+      input()
+    # plt.scatter([n]*len(all_steps), all_steps)
 
-  plt.plot(ns, avg_steps, 'x-')
-  plt.plot(ns, avg_balances, 'x-')
-  plt.show()
+  # plt.plot(ns, avg_steps, 'x-')
+  # plt.plot(ns, avg_balances, 'x-')
+  # plt.show()
 
 # print(all_steps)
