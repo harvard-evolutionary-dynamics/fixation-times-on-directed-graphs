@@ -126,7 +126,6 @@ if __name__ == '__main__':
     all_steps = []
     all_balances = []
     slow_outlier, slow_outlier_step, slow_outlier_rng = None, 0, None
-    fast_outlier, fast_outlier_step, fast_outlier_rng = None, 9999999999999999999, None
     for trial in tqdm(range(1, TRIALS+1), initial=1):
       # G = generate_directed_gnp_graph(n=n)
       G = generate_eulerian_graph(n, rho=1/10)
@@ -146,10 +145,6 @@ if __name__ == '__main__':
         slow_outlier = initial_graph
         slow_outlier_step = steps
         slow_outlier_rng = rng
-      if proportion_of_mutants(population.graph) == 1 and steps < fast_outlier_step:
-        fast_outlier = initial_graph
-        fast_outlier_step = steps
-        fast_outlier_rng = rng
 
     avg_step = np.mean(all_steps)
     std_step = np.std(all_steps)
@@ -159,12 +154,11 @@ if __name__ == '__main__':
     # std_balance = np.std(all_balances)
     # avg_balances.append(avg_balance)
 
-    print(f"{avg_step=}, {std_step=}, {fast_outlier_step=}, {slow_outlier_step=}")
+    print(f"{avg_step=}, {std_step=}, {slow_outlier_step=}")
     # print(f"{avg_balance=}, {std_balance=}, {slow_outlier_balance=}")
 
     outliers = {
       'slow': Moran(graph=slow_outlier, r=R, rng=slow_outlier_rng),
-      'fast': Moran(graph=fast_outlier, r=R, rng=fast_outlier_rng),
     }
     for name, example in outliers.items():
       save_animation(population=copy.deepcopy(example), out_file=f'{name}.gif')

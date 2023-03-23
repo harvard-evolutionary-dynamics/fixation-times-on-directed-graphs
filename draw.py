@@ -1,4 +1,5 @@
 import networkx as nx
+import time
 import matplotlib
 matplotlib.use("tkagg")
 import matplotlib.pyplot as plt; plt.close('all')
@@ -8,6 +9,7 @@ from tqdm import tqdm
 import itertools
 from stats import is_absorbed
 import utils
+from halo import Halo
 
 from moran import Moran, Type
 
@@ -26,6 +28,22 @@ def animate_nodes(population: Moran, pos=None, *args, **kwargs):
     #   population._step()
 
     # draw graph
+    for is_active in (False, True):
+      edgelist=[
+        (u, v)
+        for u, v, active in population.graph.edges.data(Moran.IS_ACTIVE_EDGE_ATTRIBUTE_NAME, default=False)
+        if active == is_active
+      ]
+      nx.draw_networkx_edges(
+        population.graph,
+        pos,
+        *args,
+        **kwargs,
+        edge_color=('black', 'orange')[is_active],
+        edgelist=edgelist,
+        arrows=True,
+      )
+    
     nodes = []
     for individual_type, color in zip(Type, 'br'):
       nodes_with_data = [
@@ -79,5 +97,13 @@ def animate_nodes(population: Moran, pos=None, *args, **kwargs):
 
 def save_animation(population: Moran, out_file: str) -> None:
   """out_file: gif"""
-  animation = animate_nodes(population)
-  animation.save(out_file, writer='pillow', savefig_kwargs={'facecolor':'white'}, fps=10, dpi=500)
+  with Halo('animating nodes') as spinner:
+    animation = animate_nodes(population)
+    spinner.succeed()
+
+  start = time.time()
+  with Halo('saving animation') as spinner:
+    animation.save(out_file, writer='pillow', savefig_kwargs={'facecolor':'white'}, fps=10, dpi=500)
+    end = time.time()
+    elapsed_seconds = end - start
+    spinner.succeed(f"Done in {elapsed_seconds:.2f}s")
