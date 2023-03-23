@@ -7,11 +7,15 @@ from decimal import Decimal
 import numpy as np
 from typing import List, Set, Tuple, Dict
 import copy
+from tqdm import tqdm
 
+import matplotlib
+matplotlib.use("tkagg")
 import matplotlib.pyplot as plt
 
 N = 100
-TRIALS = 10_000
+TRIALS = 1
+TRIALS_PER_GRAPH = 1_000
 MAX_NUMBER_STEPS = 100_000_000
 
 RNG = random.Random()
@@ -123,16 +127,21 @@ if __name__ == '__main__':
     all_balances = []
     slow_outlier, slow_outlier_step, slow_outlier_rng = None, 0, None
     fast_outlier, fast_outlier_step, fast_outlier_rng = None, 9999999999999999999, None
-    for _ in range(TRIALS):
+    for trial in tqdm(range(1, TRIALS+1), initial=1):
       # G = generate_directed_gnp_graph(n=n)
       G = generate_eulerian_graph(n, rho=1/10)
-      rng = random.Random()
-      population = Moran(graph=G, r=R, rng=rng)
       initial_graph = G.copy()
-      steps = num_steps_til_absorption(population)
+      rng = random.Random()
+      steps_for_G = []
+      for _ in tqdm(range(TRIALS_PER_GRAPH), f'particular graph #{trial}', initial=1):
+        original_graph = G.copy()
+        population = Moran(graph=original_graph, r=R, rng=rng)
+        steps_for_G.append(num_steps_til_absorption(population))
+
+      # avg steps
+      steps = np.mean(steps_for_G)
       all_steps.append(steps)
-      balance = normalized_balance(population.graph)
-      all_balances.append(balance)
+
       if steps > slow_outlier_step:
         slow_outlier = initial_graph
         slow_outlier_step = steps
@@ -140,7 +149,6 @@ if __name__ == '__main__':
       if proportion_of_mutants(population.graph) == 1 and steps < fast_outlier_step:
         fast_outlier = initial_graph
         fast_outlier_step = steps
-        fast_outlier_balance = balance
         fast_outlier_rng = rng
 
     avg_step = np.mean(all_steps)

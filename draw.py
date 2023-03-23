@@ -1,4 +1,6 @@
 import networkx as nx
+import matplotlib
+matplotlib.use("tkagg")
 import matplotlib.pyplot as plt; plt.close('all')
 from matplotlib.animation import FuncAnimation
 import numpy as np
@@ -37,8 +39,10 @@ def animate_nodes(population: Moran, pos=None, *args, **kwargs):
           pos,
           node_color=color,
           edgecolors=[
-            (color, 'green')[
-              data.get(Moran.IS_BIRTHING_ATTRIBUTE_NAME) or data.get(Moran.IS_DYING_ATTRIBUTE_NAME) or False
+            (color, 'green', 'purple')[
+                 (data.get(Moran.IS_BIRTHING_ATTRIBUTE_NAME) and 1)
+              or (data.get(Moran.IS_DYING_ATTRIBUTE_NAME) and 2)
+              or 0
             ]
             for _, data in nodes_with_data
           ],
@@ -76,4 +80,4 @@ def animate_nodes(population: Moran, pos=None, *args, **kwargs):
 def save_animation(population: Moran, out_file: str) -> None:
   """out_file: gif"""
   animation = animate_nodes(population)
-  animation.save(out_file, writer='pillow', savefig_kwargs={'facecolor':'white'}, fps=10)
+  animation.save(out_file, writer='pillow', savefig_kwargs={'facecolor':'white'}, fps=10, dpi=500)
