@@ -1,10 +1,12 @@
 import networkx as nx
 import random
+from draw import save_animation
 from moran import Moran, Type
 from stats import proportion_of_mutants, is_absorbed
 from decimal import Decimal
 import numpy as np
 from typing import List, Set, Tuple, Dict
+import copy
 
 import matplotlib.pyplot as plt
 
@@ -12,8 +14,10 @@ N = 100
 TRIALS = 10_000
 MAX_NUMBER_STEPS = 100_000_000
 
+RNG = random.Random()
+
 def random_node_label(n: int) -> int:
-  return random.randint(0, n-1)
+  return RNG.randint(0, n-1)
 
 def initialize_types(G: nx.Graph) -> None:
   n = len(G)
@@ -25,7 +29,7 @@ def initialize_types(G: nx.Graph) -> None:
 
 def generate_undirected_gnp_graph(n: int, p: Decimal = 1/2) -> nx.Graph:
   G = nx.DiGraph()
-  while not nx.is_connected(G := nx.gnp_random_graph(n=n, p=p)):
+  while not nx.is_connected(G := nx.gnp_random_graph(n=n, p=p, seed=RNG.getstate())):
     ...
     # print("Gnp was unconnected. regenerating new graph")
 
@@ -41,7 +45,7 @@ def generate_directed_gnp_graph(n: int, p: Decimal = 1/2) -> nx.Graph:
     edges = list(G.edges())
     G = G.to_directed()
     for u, v in edges:
-      random.choices(
+      RNG.choices(
         population=[
           lambda: ...,
           lambda: G.remove_edge(v, u),
@@ -109,6 +113,7 @@ def num_steps_til_absorption(population: Moran) -> int:
     raise ValueError(f"did not absorb after '{MAX_NUMBER_STEPS}'")
 
 if __name__ == '__main__':
+  R = 10
   avg_steps = []
   avg_balances = []
   ns = [int(x) for x in np.linspace(start=10, stop=N, num=5)]
@@ -116,12 +121,13 @@ if __name__ == '__main__':
   for n in ns:
     all_steps = []
     all_balances = []
-    slow_outlier, slow_outlier_step = None, 0
-    fast_outlier, fast_outlier_step = None, 9999999999999999999
+    slow_outlier, slow_outlier_step, slow_outlier_rng = None, 0, None
+    fast_outlier, fast_outlier_step, fast_outlier_rng = None, 9999999999999999999, None
     for _ in range(TRIALS):
       # G = generate_directed_gnp_graph(n=n)
       G = generate_eulerian_graph(n, rho=1/10)
-      population = Moran(graph=G, r=10)
+      rng = random.Random()
+      population = Moran(graph=G, r=R, rng=rng)
       initial_graph = G.copy()
       steps = num_steps_til_absorption(population)
       all_steps.append(steps)
@@ -130,11 +136,12 @@ if __name__ == '__main__':
       if steps > slow_outlier_step:
         slow_outlier = initial_graph
         slow_outlier_step = steps
-        slow_outlier_balance = balance
+        slow_outlier_rng = rng
       if proportion_of_mutants(population.graph) == 1 and steps < fast_outlier_step:
         fast_outlier = initial_graph
         fast_outlier_step = steps
         fast_outlier_balance = balance
+        fast_outlier_rng = rng
 
     avg_step = np.mean(all_steps)
     std_step = np.std(all_steps)
@@ -147,19 +154,25 @@ if __name__ == '__main__':
     print(f"{avg_step=}, {std_step=}, {fast_outlier_step=}, {slow_outlier_step=}")
     # print(f"{avg_balance=}, {std_balance=}, {slow_outlier_balance=}")
 
-    for example in (slow_outlier, fast_outlier):
+    outliers = {
+      'slow': Moran(graph=slow_outlier, r=R, rng=slow_outlier_rng),
+      'fast': Moran(graph=fast_outlier, r=R, rng=fast_outlier_rng),
+    }
+    for name, example in outliers.items():
+      save_animation(population=copy.deepcopy(example), out_file=f'{name}.gif')
+      input()
       nx.draw(
-        G=example,
+        G=example.graph,
         # pos=nx.spectral_layout(example),
-        pos=nx.kamada_kawai_layout(example),
-        node_color=[['blue', 'red'][data['type'].value] for _, data in example.nodes(data=True)],
+        pos=nx.kamada_kawai_layout(example.graph),
+        node_color=[['blue', 'red'][data['type'].value] for _, data in example.graph.nodes(data=True)],
         with_labels=True, 
         font_size=6,
         labels={
           # node: f"{example.in_degree(node)} --> {node} --> {slow_outlier.out_degree(node)}" 
-          node: f"d{example.in_degree(node)}" 
+          node: f"d{example.graph.in_degree(node)}" 
           # node: f"{node}"
-          for node in example.nodes
+          for node in example.graph.nodes
         },
       )
       plt.show()
