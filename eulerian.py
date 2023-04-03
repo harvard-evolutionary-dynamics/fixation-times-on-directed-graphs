@@ -135,7 +135,7 @@ if __name__ == '__main__':
   for G in eulerian(N):
     if (d := deg_seq(G)) not in by_degree_seq or not any(nx.is_isomorphic(G, H) for H in by_degree_seq[d]):
       by_degree_seq[d].append(G)
-      for r in (1000.,):
+      for r in (0.1,):
         time = expected_absorption_time(G, r)
         if max_exp_abs_time_by_r[r].add(time, G):
           print(f"Update! {r=}, {time=}, {G.edges()=}")
