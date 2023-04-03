@@ -14,6 +14,7 @@ from halo import Halo
 from moran import Moran, Type
 
 MAX_NUM_TIME_STEPS = 99999999999999
+HIGHLIGHT_ACTIVE_EDGES = False
 
 def animate_nodes(population: Moran, pos=None, *args, **kwargs):
   # define graph layout if None given
@@ -28,21 +29,22 @@ def animate_nodes(population: Moran, pos=None, *args, **kwargs):
     #   population._step()
 
     # draw graph
-    for is_active in (False, True):
-      edgelist=[
-        (u, v)
-        for u, v, active in population.graph.edges.data(Moran.IS_ACTIVE_EDGE_ATTRIBUTE_NAME, default=False)
-        if active == is_active
-      ]
-      nx.draw_networkx_edges(
-        population.graph,
-        pos,
-        *args,
-        **kwargs,
-        edge_color=('black', 'orange')[is_active],
-        edgelist=edgelist,
-        arrows=True,
-      )
+    if HIGHLIGHT_ACTIVE_EDGES:
+      for is_active in (False, True):
+        edgelist=[
+          (u, v)
+          for u, v, active in population.graph.edges.data(Moran.IS_ACTIVE_EDGE_ATTRIBUTE_NAME, default=False)
+          if active == is_active
+        ]
+        nx.draw_networkx_edges(
+          population.graph,
+          pos,
+          *args,
+          **kwargs,
+          edge_color=('black', 'orange')[is_active],
+          edgelist=edgelist,
+          arrows=True,
+        )
     
     nodes = []
     for individual_type, color in zip(Type, 'br'):
@@ -103,7 +105,7 @@ def save_animation(population: Moran, out_file: str) -> None:
 
   start = time.time()
   with Halo('saving animation') as spinner:
-    animation.save(out_file, writer='pillow', savefig_kwargs={'facecolor':'white'}, fps=10, dpi=500)
+    animation.save(out_file, writer='pillow', savefig_kwargs={'facecolor':'white'}, fps=10, dpi=200)
     end = time.time()
     elapsed_seconds = end - start
     spinner.succeed(f"Done in {elapsed_seconds:.2f}s")

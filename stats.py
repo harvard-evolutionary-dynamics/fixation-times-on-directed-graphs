@@ -10,3 +10,6 @@ def proportion_of_mutants(graph: Graph) -> Decimal:
 
 def is_absorbed(graph: Graph) -> bool:
   return proportion_of_mutants(graph) in (0, 1)
+
+def is_fixated(graph: Graph) -> bool:
+  return proportion_of_mutants(graph) == 1
