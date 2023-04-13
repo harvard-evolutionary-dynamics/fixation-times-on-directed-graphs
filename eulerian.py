@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import random
+import operator
 
 from collections import defaultdict
 from matplotlib.colors import LinearSegmentedColormap
@@ -143,26 +144,31 @@ class MaxExamples(Generic[Value, Example]):
   k: int
   heap: List[Tuple[Value, float, Example]]
 
-  def __init__(self, k: int = 1) -> None:
+  def __init__(self, k: int = 1, invert: bool = False) -> None:
     assert k > 0
     self.k = k
+    self.invert = invert
+    self.adjust = lambda value: (1-2*int(self.invert)) * value
+    self._empty_extreme = self.adjust(-np.inf)
     # Min-heap
     self.heap = []
 
   def add(self, value: Value, example: Example) -> bool:
     """Returns true iff min value changed."""
-    min_value, _, _ = self.heap[0] if len(self.heap) else (-np.inf, random.random(), None)
+    min_value, _, _ = self.heap[0] if len(self.heap) else (self._empty_extreme, random.random(), None)
+    # cmp = operator.gt if self.invert else operator.lt
     if len(self.heap) == self.k:
-      if min_value < value:
-        _ = heapq.heappushpop(self.heap, (value, random.random(), example))
+      if min_value < self.adjust(value):
+        _ = heapq.heappushpop(self.heap, (self.adjust(value), random.random(), example))
     else:
-      heapq.heappush(self.heap, (value, random.random(), example))
+      heapq.heappush(self.heap, (self.adjust(value), random.random(), example))
     new_min_value, _, _ = self.heap[0]
     # print(new_min_value, min_value, np.isclose(new_min_value, min_value, rtol=1e-6))
-    return new_min_value > min_value # and not np.isclose(new_min_value, min_value, rtol=1e-6)
+    # final_cmp = operator.lt if self.invert else operator.gt
+    return new_min_value != min_value # and not np.isclose(new_min_value, min_value, rtol=1e-6)
 
   def get(self) -> None:
-    return self.heap[::-1]
+    return sorted([(self.adjust(time), x, y) for time, x, y in self.heap], reverse=not self.invert)
       
 @functools.lru_cache(maxsize=None)
 def make_binary(test_config, N):
@@ -279,16 +285,18 @@ def generate_eulerians(N):
 
 def tournament(eulerian_generator):
   count = 0
-  K = 1
+  K = 3
   SHOW = True
   INTERACTIVE = True
   # r -> (time, G)
-  max_exp_abs_time_by_r: DefaultDict[float, MaxExamples[float, nx.DiGraph]] = defaultdict(lambda: MaxExamples(K))
+  max_exp_abs_time_by_r: DefaultDict[float, MaxExamples[float, nx.DiGraph]] = defaultdict(
+    lambda: MaxExamples(K, invert=False)
+  )
   for G in eulerian_generator:
-      for r in (200,):
+      for r in (1.1,):
         time = expected_absorption_time_single_random_mutant(G, r)
         if max_exp_abs_time_by_r[r].add(time, G) and SHOW and INTERACTIVE:
-          draw(G, "Update!", len(G), r, time)
+          draw(G, "Update!", len(G), r, time, pos=nx.circular_layout(G))
 
       count += 1
   
@@ -297,7 +305,7 @@ def tournament(eulerian_generator):
   if SHOW:
     for r, examples in max_exp_abs_time_by_r.items():
       for (time, _, G) in examples.get():
-        draw(G, "Winner!", N, r, time)
+        draw(G, "Winner!", N, r, time, pos=nx.circular_layout(G))
 
 def argmin_k(a: np.array, k: int = 1, idxs = None):
   if idxs is None:
@@ -324,9 +332,78 @@ def num_mutants_eq(idx, k):
   bits = tuple(int(bit) for bit in format(idx, f'0{N}b')[::-1])
   return sum(bits) == k
 
+
+def potentials(G: nx.DiGraph, r: float = 1.0):
+  N = len(G)
+  V = set(range(N))
+  W = lambda S: (r-1)*len(S) + N
+
+  potentials = []
+  for k in range(1, N):
+    for Sp in itertools.combinations(G.nodes(), k):
+      S = set(Sp)
+      Sc = V - S
+
+
+      ltr_sum = 0
+      for x in S:
+        for (_, y) in G.out_edges(x):
+          if y in Sc:
+            ltr_sum += (G.out_degree(x) * G.out_degree(y)) ** -1
+      ltr_sum *= r / W(S)
+
+      rtl_sum = 0
+      for y in Sc:
+        for (_, x) in G.out_edges(y):
+          if x in S:
+            rtl_sum += (G.out_degree(x) * G.out_degree(y)) ** -1
+      rtl_sum *= 1 / W(S)
+
+      potential = ltr_sum - rtl_sum
+      potentials.append(potential)
+
+  return potentials
+
+
+def degree_variance(G: nx.DiGraph):
+  ds = []
+  for node in G.nodes():
+    ind = G.in_degree(node)
+    outd = G.out_degree(node)
+    assert ind == outd
+    ds.append(ind)
+  return np.var(ds)
+
+def is_undirected(G: nx.DiGraph):
+  return all((v, u) in G.edges() for (u, v) in G.edges())
+
+
+def plot_potentials():
+  N = 5
+  R = 1
+  count = 0
+  xs = list(range(2**N-2))
+  # for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+  for G in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
+    # if 0 < degree_variance(G):
+    if nx.is_strongly_connected(G) and not nx.is_regular(G) and not is_undirected(G):
+      ps = potentials(G, R)
+      if all(p >= 0 for p in ps):
+        print(sorted(((G.in_degree(node), G.out_degree(node)) for node in G.nodes()), reverse=True))
+        for z in nx.algorithms.isomorphism.DiGraphMatcher(G, G).isomorphisms_iter():
+          print(z)
+        nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
+        plt.show()
+        # plt.plot(xs, ps, marker='o')
+        count += 1
+
+  print(f"{count=}")
+  plt.show()
+
 if __name__ == '__main__':
+  # tournament()
   N = 7
-  tournament(yield_all_digraph6(Path(f"data/euler{N}.d6")))
+  tournament(yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")))
   # tournament(generate_eulerians(N))
 
 def custom_graph_absorptions():
