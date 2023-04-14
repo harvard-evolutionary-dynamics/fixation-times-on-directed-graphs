@@ -330,41 +330,56 @@ def is_idx_lowest_circular_symmetry(idx, N):
       return False
   return True
 
-def num_mutants_eq(idx, k):
+def num_mutants_eq(idx, k, N):
   bits = tuple(int(bit) for bit in format(idx, f'0{N}b')[::-1])
   return sum(bits) == k
 
 def fan_system(B: int, r: float):
   N = 2*B+1
   F = lambda b: 1 + (r-1) * b
-  A = np.array(shape=())
 
   def W(core, b00, b01, b10, b11):
     return F(core) + b00 * (1 + 1) + (b01 + b10) * (1 + r) + b11 * (r + r)
 
+  def is_valid_state(core, b00, b01, b10):
+    return core in (0, 1) and all((bxx in range(B+1)) for bxx in (b00, b01, b10)) and b00 + b01 + b10 <= B
+
+  @functools.lru_cache(maxsize=None)
   def state_to_idx(core, b00, b01, b10):
-    assert all((bxx in range(B+1)) for bxx in (b00, b01, b10)) and b00 + b01 + b10 <= B
-    return sum(x*(B+1)**i for i, x in enumerate((core, b00, b01, b10)[::-1]))
+    assert is_valid_state(core, b00, b01, b10), (core, b00, b01, b10)
+    
+    count = 0
+    for pcore in (0, 1):
+      for pb00 in range(B+1):
+        for pb01 in range(B-pb00+1):
+          for pb10 in range(B-pb00-pb01+1):
+            if (core, b00, b01, b10) == (pcore, pb00, pb01, pb10):
+              return count
+            count += 1
+    
+    raise ValueError(f"no known idx for state {(core, b00, b01, b10)}")
 
-  def idx_to_state(idx):
-    return tuple(
-      (idx // ((B+1)**i)) % (B+1)
-      for i in range(4)
-    )[::-1]
+  # def idx_to_state(idx):
+  #   return tuple(
+  #     (idx // ((B+1)**i)) % (B+1)
+  #     for i in range(4)
+  #   )[::-1]
 
+  num_indices = 1 + state_to_idx(1, B, 0, 0)
+  A = np.zeros(shape=(1+num_indices, 1+num_indices))
   for core in (0, 1):
     for b00 in range(B+1):
       for b01 in range(B-b00+1):
         for b10 in range(B-b00-b01+1):
           b11 = B-b00-b01-b10
-
           w = W(core, b00, b01, b10, b11)
-          
 
 
           # S = (core, b00, b01, b10)
+          # T(S) = 0
+
           # # Another step.
-          # T(S) = 1
+          # T(S) += 1
 
           # # Event that core is selected.
           # core_weight = F(core)
@@ -378,10 +393,10 @@ def fan_system(B: int, r: float):
           # # Event that first node on blade is selected.
           # first_node_weight = b00 * 1 + b01 * r + b10 * 1 + b11 * r
           # T(S) += first_node_weight / w * (
-          #     b00 * 1 / first_node_weight * T(core, b00, b01, b10, b11)
-          #   + b01 * r / first_node_weight * T(core, b00, b01-1, b10, b11)
-          #   + b10 * 1 / first_node_weight * T(core, b00+1, b01, b10-1, b11)
-          #   + b11 * r / first_node_weight * T(core, b00, b01, b10, b11)
+          #     b00 * 1 / first_node_weight * T(core, b00, b01, b10)
+          #   + b01 * r / first_node_weight * T(core, b00, b01-1, b10)
+          #   + b10 * 1 / first_node_weight * T(core, b00+1, b01, b10-1)
+          #   + b11 * r / first_node_weight * T(core, b00, b01, b10)
           # )
 
           # # Event that second node on blade is selected (pointing to core).
@@ -393,10 +408,58 @@ def fan_system(B: int, r: float):
           #   + b11 * r / second_node_weight * T(1, b00, b01, b10)
           # )
 
-  # Absorbing states
-  A[state_to_idx(1, 0, 0, 0)] = 0
-  A[state_to_idx(0, B, 0, 0)] = 0
+          # state -> coefficient
+          coeffs = defaultdict(float)
+          coeffs[(core, b00, b01, b10)] += 1
 
+          # non-absorbing states.
+          if (core, b00, b01, b10) not in ((1, 0, 0, 0), (0, B, 0, 0)):
+            core_weight = F(core)
+            coeffs[(core, b00-core, b01+core, b10)] -= (core_weight / w) * (b00/B)
+            coeffs[(core, b00+(1-core), b01-(1-core), b10)] -= (core_weight / w) * (b01/B)
+            coeffs[(core, b00, b01, b10-core)] -= (core_weight / w) * (b10/B)
+            coeffs[(core, b00, b01, b10+(1-core))] -= (core_weight / w) * (b11/B)
+
+            first_node_weight = b00 * 1 + b01 * r + b10 * 1 + b11 * r
+            coeffs[(core, b00, b01, b10)] -= (first_node_weight / w) * (b00 * 1 / first_node_weight)
+            coeffs[(core, b00, b01-1, b10)] -= (first_node_weight / w) * (b01 * r / first_node_weight)
+            coeffs[(core, b00+1, b01, b10-1)] -= (first_node_weight / w) * (b10 * 1 / first_node_weight)
+            coeffs[(core, b00, b01, b10)] -= (first_node_weight / w) * (b11 * r / first_node_weight)
+
+            second_node_weight = b00 * 1 + b01 * 1 + b10 * r + b11 * r
+            coeffs[(0, b00, b01, b10)] -= (second_node_weight / w) * (b00 * 1 / second_node_weight)
+            coeffs[(0, b00, b01, b10)] -= (second_node_weight / w) * (b01 * 1 / second_node_weight)
+            coeffs[(1, b00, b01, b10)] -= (second_node_weight / w) * (b10 * r / second_node_weight)
+            coeffs[(1, b00, b01, b10)] -= (second_node_weight / w) * (b11 * r / second_node_weight)
+
+          row = state_to_idx(core, b00, b01, b10)
+          for state, coeff in coeffs.items():
+            if not is_valid_state(*state): continue
+            # print(row, state, coeff)
+            col = state_to_idx(*state)
+            A[row, col] = coeff
+
+  # Start with a mutant placed randomly.
+  A[num_indices, num_indices] = 1
+  A[num_indices, state_to_idx(1, B, 0, 0)] = -1/N
+  A[num_indices, state_to_idx(0, B-1, 1, 0)] = -(1-1/N)/2
+  A[num_indices, state_to_idx(0, B-1, 0, 1)] = -(1-1/N)/2
+
+  b = np.ones(shape=(1+num_indices,))
+
+  # Absorbing states
+  b[state_to_idx(1, 0, 0, 0)] = 0
+  b[state_to_idx(0, B, 0, 0)] = 0
+
+  # Starting state.
+  b[num_indices] = 0
+
+  return A, b
+
+def fan_solution(B: int, r: float):
+  A, b = fan_system(B, r)
+  T = np.linalg.solve(A, b)
+  return T[-1]
   
 
 def potentials(G: nx.DiGraph, r: float = 1.0):
@@ -479,7 +542,21 @@ if __name__ == '__main__':
   # tournament(yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")))
   # tournament(yield_all_digraph6(Path(f"data/eulerian-oriented/eulerian{N}.d6")))
   # tournament(generate_eulerians(N))
-  plot_potentials()
+  # plot_potentials()
+  for r in (0.1, 0.5, 0.9, 1.0, 1.1, 1.5, 2, 100):
+    times = []
+    for b in range(1, 30+1):
+      time = fan_solution(B=b, r=r)
+      times.append(time)
+    plt.plot(times, marker="o", label=f"{r=}")
+
+  plt.xlabel("# blades")
+  plt.ylabel("time")
+  plt.title("Fan size and r vs time")
+  plt.legend()
+  plt.show()
+
+  # print(f"{time=}")
 
 def custom_graph_absorptions():
   N = 8
@@ -495,7 +572,7 @@ def custom_graph_absorptions():
     G,
     r=R,
     k=30,
-    keep_idx=lambda idx: is_idx_lowest_circular_symmetry(idx, N) and num_mutants_eq(idx, N // 2),
+    keep_idx=lambda idx: is_idx_lowest_circular_symmetry(idx, N) and num_mutants_eq(idx, N // 2, N),
   )
 
   for extreme in ('max', 'min')[::+1]:
