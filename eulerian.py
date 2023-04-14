@@ -117,6 +117,7 @@ def extreme_expected_absorption_times(G: nx.DiGraph, r: float, k: int = 1, keep_
 
 def expected_absorption_time_single_random_mutant(G: nx.DiGraph, r: float):
   """Under uniform single mutant initialization."""
+  N = len(G)
   Ap, bp = expected_absorption_time_systems(G, r)
 
   A = np.zeros(shape=(1+2**N, 1+2**N))
@@ -287,10 +288,10 @@ def tournament(eulerian_generator):
   count = 0
   K = 3
   SHOW = True
-  INTERACTIVE = True
+  INTERACTIVE = False
   # r -> (time, G)
   max_exp_abs_time_by_r: DefaultDict[float, MaxExamples[float, nx.DiGraph]] = defaultdict(
-    lambda: MaxExamples(K, invert=False)
+    lambda: MaxExamples(K, invert=True)
   )
   for G in eulerian_generator:
       for r in (1.1,):
@@ -306,6 +307,7 @@ def tournament(eulerian_generator):
     for r, examples in max_exp_abs_time_by_r.items():
       for (time, _, G) in examples.get():
         draw(G, "Winner!", N, r, time, pos=nx.circular_layout(G))
+        # draw(G, "Winner!", N, r, time, pos=nx.planar_layout(G))
 
 def argmin_k(a: np.array, k: int = 1, idxs = None):
   if idxs is None:
@@ -332,6 +334,70 @@ def num_mutants_eq(idx, k):
   bits = tuple(int(bit) for bit in format(idx, f'0{N}b')[::-1])
   return sum(bits) == k
 
+def fan_system(B: int, r: float):
+  N = 2*B+1
+  F = lambda b: 1 + (r-1) * b
+  A = np.array(shape=())
+
+  def W(core, b00, b01, b10, b11):
+    return F(core) + b00 * (1 + 1) + (b01 + b10) * (1 + r) + b11 * (r + r)
+
+  def state_to_idx(core, b00, b01, b10):
+    assert all((bxx in range(B+1)) for bxx in (b00, b01, b10)) and b00 + b01 + b10 <= B
+    return sum(x*(B+1)**i for i, x in enumerate((core, b00, b01, b10)[::-1]))
+
+  def idx_to_state(idx):
+    return tuple(
+      (idx // ((B+1)**i)) % (B+1)
+      for i in range(4)
+    )[::-1]
+
+  for core in (0, 1):
+    for b00 in range(B+1):
+      for b01 in range(B-b00+1):
+        for b10 in range(B-b00-b01+1):
+          b11 = B-b00-b01-b10
+
+          w = W(core, b00, b01, b10, b11)
+          
+
+
+          # S = (core, b00, b01, b10)
+          # # Another step.
+          # T(S) = 1
+
+          # # Event that core is selected.
+          # core_weight = F(core)
+          # T(S) +=  core_weight / w * (
+          #     (b00/B) * T(core, b00-core, b01+core, b10)
+          #   + (b01/B) * T(core, b00+(1-core), b01-(1-core), b10)
+          #   + (b10/B) * T(core, b00, b01, b10-core)
+          #   + (b11/B) * T(core, b00, b01, b10+(1-core))
+          #   )
+
+          # # Event that first node on blade is selected.
+          # first_node_weight = b00 * 1 + b01 * r + b10 * 1 + b11 * r
+          # T(S) += first_node_weight / w * (
+          #     b00 * 1 / first_node_weight * T(core, b00, b01, b10, b11)
+          #   + b01 * r / first_node_weight * T(core, b00, b01-1, b10, b11)
+          #   + b10 * 1 / first_node_weight * T(core, b00+1, b01, b10-1, b11)
+          #   + b11 * r / first_node_weight * T(core, b00, b01, b10, b11)
+          # )
+
+          # # Event that second node on blade is selected (pointing to core).
+          # second_node_weight = b00 * 1 + b01 * 1 + b10 * r + b11 * r
+          # T(S) += second_node_weight / w * (
+          #     b00 * 1 / second_node_weight * T(0, b00, b01, b10)
+          #   + b01 * 1 / second_node_weight * T(0, b00, b01, b10)
+          #   + b10 * r / second_node_weight * T(1, b00, b01, b10)
+          #   + b11 * r / second_node_weight * T(1, b00, b01, b10)
+          # )
+
+  # Absorbing states
+  A[state_to_idx(1, 0, 0, 0)] = 0
+  A[state_to_idx(0, B, 0, 0)] = 0
+
+  
 
 def potentials(G: nx.DiGraph, r: float = 1.0):
   N = len(G)
@@ -378,33 +444,42 @@ def is_undirected(G: nx.DiGraph):
   return all((v, u) in G.edges() for (u, v) in G.edges())
 
 
+def is_good(ps: List[float]):
+  return all(p >= 0 for p in ps)
+  # if not nx.is_strongly_connected(G) and not nx.is_regular(G) and not is_undirected(G)
+
 def plot_potentials():
   N = 5
   R = 1
+  total_count = 0
   count = 0
   xs = list(range(2**N-2))
   # for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
   for G in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
     # if 0 < degree_variance(G):
-    if nx.is_strongly_connected(G) and not nx.is_regular(G) and not is_undirected(G):
-      ps = potentials(G, R)
-      if all(p >= 0 for p in ps):
-        print(sorted(((G.in_degree(node), G.out_degree(node)) for node in G.nodes()), reverse=True))
-        for z in nx.algorithms.isomorphism.DiGraphMatcher(G, G).isomorphisms_iter():
-          print(z)
-        nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
-        plt.show()
-        # plt.plot(xs, ps, marker='o')
-        count += 1
+    if not nx.is_strongly_connected(G) or nx.is_regular(G) or is_undirected(G): continue
+    total_count += 1
+    ps = potentials(G, R)
+    if is_good(ps):
+      print(sorted(((G.in_degree(node), G.out_degree(node)) for node in G.nodes()), reverse=True))
+      # for z in nx.algorithms.isomorphism.DiGraphMatcher(G, G).isomorphisms_iter():
+      #   print(z)
+      nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
+      plt.show()
+      # plt.plot(xs, ps, marker='o')
+      count += 1
 
   print(f"{count=}")
+  print(f"{total_count=}")
   plt.show()
 
 if __name__ == '__main__':
   # tournament()
-  N = 7
-  tournament(yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")))
+  # N = 6
+  # tournament(yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")))
+  # tournament(yield_all_digraph6(Path(f"data/eulerian-oriented/eulerian{N}.d6")))
   # tournament(generate_eulerians(N))
+  plot_potentials()
 
 def custom_graph_absorptions():
   N = 8
