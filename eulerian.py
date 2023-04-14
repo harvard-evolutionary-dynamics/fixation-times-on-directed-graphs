@@ -286,7 +286,7 @@ def generate_eulerians(N):
 
 def tournament(eulerian_generator):
   count = 0
-  K = 3
+  K = 1
   SHOW = True
   INTERACTIVE = False
   # r -> (time, G)
@@ -412,6 +412,8 @@ def fan_system(B: int, r: float):
           coeffs = defaultdict(float)
           coeffs[(core, b00, b01, b10)] += 1
 
+          prob_inc = 0
+          prob_dec = 0
           # non-absorbing states.
           if (core, b00, b01, b10) not in ((1, 0, 0, 0), (0, B, 0, 0)):
             core_weight = F(core)
@@ -431,6 +433,20 @@ def fan_system(B: int, r: float):
             coeffs[(0, b00, b01, b10)] -= (second_node_weight / w) * (b01 * 1 / second_node_weight)
             coeffs[(1, b00, b01, b10)] -= (second_node_weight / w) * (b10 * r / second_node_weight)
             coeffs[(1, b00, b01, b10)] -= (second_node_weight / w) * (b11 * r / second_node_weight)
+
+            if core:
+              prob_inc += (core_weight / w) * (b00/B)
+              prob_inc += (core_weight / w) * (b10/B)
+              prob_inc += (first_node_weight / w) * (b01 * r / first_node_weight)
+              prob_dec += (core_weight / w) * (b10/B)
+              prob_dec += (first_node_weight / w) * (b10 * 1 / first_node_weight)
+              prob_dec += (second_node_weight / w) * (b00 * 1 / second_node_weight)
+              prob_dec += (second_node_weight / w) * (b01 * 1 / second_node_weight)
+            # else:
+            #   prob_inc += 
+            # print(f"{prob_inc=} vs {prob_dec=}")
+            
+              
 
           row = state_to_idx(core, b00, b01, b10)
           for state, coeff in coeffs.items():
@@ -536,16 +552,10 @@ def plot_potentials():
   print(f"{total_count=}")
   plt.show()
 
-if __name__ == '__main__':
-  # tournament()
-  # N = 6
-  # tournament(yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")))
-  # tournament(yield_all_digraph6(Path(f"data/eulerian-oriented/eulerian{N}.d6")))
-  # tournament(generate_eulerians(N))
-  # plot_potentials()
-  for r in (0.1, 0.5, 0.9, 1.0, 1.1, 1.5, 2, 100):
+def plot_fans():
+  for r in (0.1, 0.5, 0.9, 1.0, 1.1, 1.5, 100, 1_000, 10_000, 100_000):
     times = []
-    for b in range(1, 30+1):
+    for b in range(1, 10+1):
       time = fan_solution(B=b, r=r)
       times.append(time)
     plt.plot(times, marker="o", label=f"{r=}")
@@ -578,3 +588,13 @@ def custom_graph_absorptions():
   for extreme in ('max', 'min')[::+1]:
     for rank, (mutants, time) in enumerate(extremes[extreme], start=1):
       draw(G, f"{extreme} {rank=}", N, R, time=time, mutants=mutants, with_stg=False, pos=nx.circular_layout(G))
+if __name__ == '__main__':
+
+  # tournament()
+  # N = 7
+  # tournament((G for G in yield_all_digraph6(Path(f"data/directed-oriented/direct{N}.d6")) if nx.is_strongly_connected(G)))
+  # tournament(yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")))
+  # tournament(yield_all_digraph6(Path(f"data/eulerian-oriented/eulerian{N}.d6")))
+  # tournament(generate_eulerians(N))
+  # plot_potentials()
+  plot_fans()
