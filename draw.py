@@ -1,7 +1,7 @@
 import networkx as nx
 import time
 import matplotlib
-matplotlib.use("tkagg")
+#matplotlib.use("tkagg")
 import matplotlib.pyplot as plt; plt.close('all')
 from matplotlib.animation import FuncAnimation
 import numpy as np

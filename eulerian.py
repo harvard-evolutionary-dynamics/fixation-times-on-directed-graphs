@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import fractions
 import functools
 import heapq
 import itertools
@@ -11,7 +12,7 @@ import operator
 from collections import defaultdict
 from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
-from typing import DefaultDict, Dict, Generic, List, Tuple, TypeVar, Set, Optional
+from typing import DefaultDict, Dict, Generic, Iterable, List, Tuple, TypeVar, Set, Optional
 
 from utils import yield_all_digraph6
 
@@ -78,14 +79,15 @@ def expected_absorption_time_systems(G: nx.DiGraph, r: float):
   prob: DefaultDict[Tuple[Tuple[int], Tuple[int]], float] = defaultdict(float)
   for config in itertools.product((0, 1), repeat=N):
     prob[config, config] = 0.0
+  node_idx = {node: idx for idx, node in enumerate(G.nodes())}
   for u in G.nodes():
     for (_, v) in G.out_edges(u):
       for config in itertools.product((0, 1), repeat=N):
         k = sum(config)
         Wk = N + (r-1) * k
-        prob_u_picked = ((r-1) * config[u] + 1) / Wk
+        prob_u_picked = ((r-1) * config[node_idx[u]] + 1) / Wk
         prob_u_to_v_picked = 1.0 / G.out_degree(u)
-        next_config = config[:v] + (config[u],) + config[v+1:]
+        next_config = config[:node_idx[v]] + (config[node_idx[u]],) + config[node_idx[v]+1:]
 
         prob[(config, next_config)] += prob_u_picked * prob_u_to_v_picked
   
@@ -244,7 +246,6 @@ def draw_stg(G: nx.DiGraph) -> None:
   nx.draw_networkx_edges(STG, pos=pos, edgelist=edgelist, edge_color=edge_colors, width=edge_weights, edge_cmap=edge_cmap, edge_vmin=-1, edge_vmax=+1, arrows=False)
   nx.draw_networkx_nodes(STG, pos=pos, nodelist=nodelist, node_color=node_colors, cmap=node_cmap, vmin=0, vmax=G.number_of_edges())
 
-
 def draw(
   G: nx.DiGraph,
   prefix: str,
@@ -283,7 +284,6 @@ def generate_eulerians(N):
       by_degree_seq[d].append(G)
       yield G
 
-
 def tournament(eulerian_generator):
   count = 0
   K = 1
@@ -307,7 +307,6 @@ def tournament(eulerian_generator):
     for r, examples in max_exp_abs_time_by_r.items():
       for (time, _, G) in examples.get():
         draw(G, "Winner!", N, r, time, pos=nx.circular_layout(G))
-        # draw(G, "Winner!", N, r, time, pos=nx.planar_layout(G))
 
 def argmin_k(a: np.array, k: int = 1, idxs = None):
   if idxs is None:
@@ -318,7 +317,6 @@ def argmax_k(a: np.array, k: int = 1, idxs = None):
   if idxs is None:
     idxs = range(len(a))
   return heapq.nlargest(k, idxs, a.take)
-
 
 def is_idx_lowest_circular_symmetry(idx, N):
   bits = tuple(int(bit) for bit in format(idx, f'0{N}b')[::-1])
@@ -477,6 +475,43 @@ def fan_solution(B: int, r: float):
   T = np.linalg.solve(A, b)
   return T[-1]
   
+def cross_edges(G: nx.DiGraph, S, T):
+  return list((u, v) for u in S for (_, v) in G.out_edges(u) if v in T)
+
+def potentials_1(G: nx.DiGraph, r: float = 1.0):
+  N = len(G)
+  V = set(range(N))
+  W = lambda S: (r-1)*len(S) + N
+
+  def conductance(S_boundary, S, Sc):
+    assert len(S|Sc) == N
+    print(list(S_boundary), list(S), list(Sc), k)
+    return ((1+flow_edge_set_eulerian(G, S_boundary)) / (1+min(flow_vertex_set_eulerian(G, S), flow_vertex_set_eulerian(G, Sc)))) ** -1
+
+  potentials = []
+  def phi(S):
+    return conductance(cross_edges(G, S, V-S), S, V-S)
+
+  for k in range(1, N):
+    for Sp in itertools.combinations(G.nodes(), k):
+      S = set(Sp)
+      Sc = V - S
+
+      c = conductance(cross_edges(G, S, Sc), S, Sc)
+      ltr_sum = 0
+      for x, y in cross_edges(G, S, Sc):
+        ltr_sum += 1/G.out_degree(x) * (phi(S|{y}) - c)
+      ltr_sum *= r / W(S)
+
+      rtl_sum = 0
+      for y, x in cross_edges(G, Sc, S):
+        rtl_sum += 1/G.out_degree(y) * (c - phi(S-{x}))
+      rtl_sum *= 1 / W(S)
+
+      potential = ltr_sum + rtl_sum
+      potentials.append(potential)
+
+  return potentials
 
 def potentials(G: nx.DiGraph, r: float = 1.0):
   N = len(G)
@@ -488,7 +523,6 @@ def potentials(G: nx.DiGraph, r: float = 1.0):
     for Sp in itertools.combinations(G.nodes(), k):
       S = set(Sp)
       Sc = V - S
-
 
       ltr_sum = 0
       for x in S:
@@ -509,7 +543,6 @@ def potentials(G: nx.DiGraph, r: float = 1.0):
 
   return potentials
 
-
 def degree_variance(G: nx.DiGraph):
   ds = []
   for node in G.nodes():
@@ -522,31 +555,201 @@ def degree_variance(G: nx.DiGraph):
 def is_undirected(G: nx.DiGraph):
   return all((v, u) in G.edges() for (u, v) in G.edges())
 
-
 def is_good(ps: List[float]):
   return all(p >= 0 for p in ps)
-  # if not nx.is_strongly_connected(G) and not nx.is_regular(G) and not is_undirected(G)
+
+def h(G: nx.DiGraph):
+  """edge expansion"""
+  N = len(G)
+  V = set(range(N))
+  conductances = []
+  for k in range(1, N):
+    for Sp in itertools.combinations(G.nodes(), k):
+      S = set(Sp)
+      Sc = V - S
+      boundary = set()
+      for u in S:
+        for (_, v) in G.out_edges(u):
+          if v in Sc:
+            boundary.add((u, v))
+      conductance = flow_edge_set_eulerian(G, boundary) / min(flow_vertex_set_eulerian(G, S), flow_vertex_set_eulerian(G, Sc))
+      # conductance = len(boundary) / k
+      conductances.append(conductance)
+  return np.mean(conductances), conductances
+
+def flow_edge_set_eulerian(G: nx.DiGraph, S: Iterable[Tuple[int, int]]):
+  return sum(
+    flow_eulerian(G, u, v)
+    for (u, v) in S
+  )
+
+def flow_vertex_set_eulerian(G: nx.DiGraph, S: Iterable[int]):
+  return sum(
+    flow_single_eulerian(G, v)
+    for v in S
+  )
+
+def flow_single_eulerian(G: nx.DiGraph, v: int):
+  return sum(
+    flow_eulerian(G, u, v)
+    for (u, _) in G.in_edges(v)
+  )
+
+def flow_eulerian(G: nx.DiGraph, u: int, v: int):
+  if (u, v) not in G.edges(): return 0
+  puv = 1/G.out_degree(u)
+  phi = G.out_degree(u) / G.number_of_edges()
+  return phi * puv
+
+def find_r(G: nx.DiGraph, *, up: bool):
+  SEARCH_ITERATIONS = 100
+  multiple = 2 if up else 1/2
+  agr = min if up else max
+  # Find upper bound.
+  advantageous_r_lower = advantageous_r_upper = 1
+  while not is_good(potentials(G, advantageous_r_upper)) and advantageous_r_upper:
+    advantageous_r_upper *= multiple
+    # print(advantageous_r_upper)
+
+  # Binary search.
+  best_advantageous_r = np.inf if up else 0
+  for _ in range(SEARCH_ITERATIONS):
+    advantageous_r_mid = (advantageous_r_lower + advantageous_r_upper) / 2
+    ps = potentials(G, advantageous_r_mid)
+    if is_good(ps):
+      best_advantageous_r = agr(advantageous_r_mid, best_advantageous_r)
+      advantageous_r_lower = advantageous_r_mid
+    else:
+      advantageous_r_upper = advantageous_r_mid
+  return best_advantageous_r
+
+def drifts(G: nx.DiGraph, r: float):
+  N = len(G)
+  V = G.nodes()
+  ds = []
+  for k in range(1, N):
+    for Sp in itertools.combinations(G.nodes(), k):
+      S = set(Sp)
+      Sc = V - S
+      p_inc = sum(1/G.out_degree(u) for (u, _) in cross_edges(G, S, Sc))
+      p_dec = sum(1/G.out_degree(v) for (v, _) in cross_edges(G, Sc, S))
+      ds.append(r*p_dec/p_inc)
+  return ds
+
+def num_cross_edges(G: nx.DiGraph):
+  N = len(G)
+  V = G.nodes()
+  count = 0
+  for k in range(1, N):
+    for Sp in itertools.combinations(G.nodes(), k):
+      S = set(Sp)
+      Sc = V - S
+      count += sum(1 for _ in cross_edges(G, S, Sc))
+  return count
+
+def plot_drifts():
+  N = 4
+  R = 1
+  total_count = 0
+  count = 0
+  mins = []
+  maxs = []
+  avgs = []
+  stds = []
+  total_cross_edges = []
+  # for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+  for G in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
+    # if 0 < degree_variance(G):
+    # if not nx.is_strongly_connected(G) or nx.is_regular(G) or is_undirected(G) or _is_eulerian(G): continue
+    if not nx.is_strongly_connected(G): continue # or nx.is_regular(G) or is_undirected(G): continue
+    total_count += 1
+    ds = drifts(G, R)
+    # mins.append(min(ds))
+    # maxs.append(max(ds))
+    avgs.append(np.mean(ds))
+    stds.append(np.std(ds))
+    total_cross_edges.append(num_cross_edges(G) / G.number_of_edges())
+    print(total_cross_edges)
+    # plt.plot(ds, marker='o')
+
+  print(f"{count=}")
+  print(f"{total_count=}")
+  plt.figure()
+  plt.hist(total_cross_edges)
+  # plt.figure()
+  # plt.hist(avgs, bins=100)
+  # plt.figure()
+  # plt.hist(stds, bins=100)
+  plt.show()
+
+def plot_r_potential_boundaries():
+  import matplotlib
+  from matplotlib.backend_bases import PickEvent
+  N = 6
+  def on_pick(event: PickEvent):
+    print(event)
+    print(event.artist)
+    idx = event.ind[0]
+    H = undirected_graphs[idx]
+    plt.figure()
+    nx.draw(H, pos=nx.circular_layout(H), with_labels=True, connectionstyle="arc3,rad=0.1")
+    plt.show()
+
+  fig, axes = plt.subplots(3, 3)
+  fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+  fig.supxlabel("average conductance")
+  fig.supylabel("expected absorption time")
+  fig.suptitle(f"average conductance vs expected absorption time for Eulerian {N=}")
+  fig.canvas.callbacks.connect('pick_event', on_pick)
+  for idx, r in enumerate((.1, .9, .99, 1, 1.01, 1.1, 1.5, 10, 100), start=0):
+    avg_conductances_undirected = []
+    abs_times_undirected = []
+    avg_conductances_directed = []
+    abs_times_directed = []
+    undirected_graphs = []
+    directed_graphs = []
+    for G in (x for x in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")) if random.random() <= 1.00005):
+      if not nx.is_strongly_connected(G): continue #or not nx.is_regular(G): continue #  or is_undirected(G): continue
+      avg_conductance, conductances = h(G)
+      if is_undirected(G):
+        abs_times_undirected.append(abs_time := expected_absorption_time_single_random_mutant(G, r))
+        avg_conductances_undirected.append(avg_conductance)
+        undirected_graphs.append(G)
+      else:
+        abs_times_directed.append(abs_time := expected_absorption_time_single_random_mutant(G, r))
+        avg_conductances_directed.append(avg_conductance)
+        directed_graphs.append(G)
+
+      # if avg_conductance == 1:
+      #   print(conductances)
+      #   nx.draw(G)
+      #   plt.show()
+  
+    axes[idx // 3, idx % 3].scatter(avg_conductances_directed, abs_times_directed, s=15, c='green', alpha=.2)
+    axes[idx // 3, idx % 3].scatter(avg_conductances_undirected, abs_times_undirected, s=15, c='purple', alpha=.2, picker=5, data=undirected_graphs)
+    axes[idx // 3, idx % 3].set_title(f"{r=}")
+  plt.show()
 
 def plot_potentials():
   N = 5
   R = 1
   total_count = 0
   count = 0
-  xs = list(range(2**N-2))
-  # for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
-  for G in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
+  for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+  # for G in yield_all_digraph6(Path(f"data/directed-oriented/direct{N}.d6")):
     # if 0 < degree_variance(G):
-    if not nx.is_strongly_connected(G) or nx.is_regular(G) or is_undirected(G): continue
+    # if not nx.is_strongly_connected(G) or nx.is_regular(G) or is_undirected(G) or _is_eulerian(G): continue
+    if not nx.is_strongly_connected(G): continue
     total_count += 1
-    ps = potentials(G, R)
-    if is_good(ps):
-      print(sorted(((G.in_degree(node), G.out_degree(node)) for node in G.nodes()), reverse=True))
+    ps = potentials_1(G, R)
+    if good := is_good(ps):
+      # print(sorted(((G.in_degree(node), G.out_degree(node)) for node in G.nodes()), reverse=True))
       # for z in nx.algorithms.isomorphism.DiGraphMatcher(G, G).isomorphisms_iter():
       #   print(z)
-      nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
-      plt.show()
-      # plt.plot(xs, ps, marker='o')
+      # nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
+      # plt.show()
       count += 1
+    plt.plot(ps, marker='o', color=['red', 'green'][good])
 
   print(f"{count=}")
   print(f"{total_count=}")
@@ -569,26 +772,98 @@ def plot_fans():
   # print(f"{time=}")
 
 def custom_graph_absorptions():
-  N = 8
-  R = 0.001
+  N = 12
+  R = 100
 
-  # Directed cycle.
   G: nx.DiGraph = nx.DiGraph()
-  for idx in range(N):
-    G.add_edge(idx, (idx+1) % N)
-    G.add_edge((idx+1) % N, idx)
+  for i in range(N):
+    G.add_edge(i, (i+1)%N)
+  G.add_edge(N-1, 0)
 
-  extremes = extreme_expected_absorption_times(
-    G,
-    r=R,
-    k=30,
-    keep_idx=lambda idx: is_idx_lowest_circular_symmetry(idx, N) and num_mutants_eq(idx, N // 2, N),
-  )
+  # for graph in range(num_subgraphs):
+  #   for i in range(N):
+  #     for j in range(N):
+  #       G.add_edge((graph, i), (graph, j))
+  #       G.add_edge((graph, j), (graph, i))
+  
+  # for graph_a in range(num_subgraphs):
+  #   for graph_b in range(graph_a+1, num_subgraphs):
+  #     G.add_edge((graph_a, 0), ("connector", graph_a, graph_b))
+  #     G.add_edge(("connector", graph_a, graph_b), (graph_a, 0))
 
-  for extreme in ('max', 'min')[::+1]:
-    for rank, (mutants, time) in enumerate(extremes[extreme], start=1):
-      draw(G, f"{extreme} {rank=}", N, R, time=time, mutants=mutants, with_stg=False, pos=nx.circular_layout(G))
+  #     G.add_edge((graph_b, 0), ("connector", graph_a, graph_b))
+  #     G.add_edge(("connector", graph_a, graph_b), (graph_b, 0))
+
+  for num_mutants in range(1, N):
+    extremes = extreme_expected_absorption_times(
+      G,
+      r=R,
+      k=1,
+      keep_idx=lambda idx: is_idx_lowest_circular_symmetry(idx, N) and num_mutants_eq(idx, num_mutants, N),
+    )
+
+    for extreme in ('max', 'min')[::+1]:
+      for rank, (mutants, time) in enumerate(extremes[extreme], start=1):
+        draw(G, f"{extreme} {rank=} {num_mutants=}", N, R, time=time, mutants=mutants, with_stg=False, pos=nx.circular_layout(G), connectionstyle="arc3,rad=0.1")
+
+def fixation_probabilities(G: nx.DiGraph):
+  """Compute fixation probabilities under neutral evolution."""
+  N = len(G)
+  A = np.zeros((N, N))
+  b = np.zeros((N,))
+
+  V = list(G.nodes())
+  subsets = {None} | {u for u, _ in zip(V, range(N-1))}
+  idx = {u: i for i, u in enumerate(subsets)}
+
+  loner_set = set(V) - subsets
+  assert len(loner_set) == 1
+  loner = list(loner_set)[0]
+  idx[loner] = len(subsets)
+  # label = {v: k for k, v in idx.items()}
+  for u in subsets:
+    if u is None:
+      A[idx[u], idx[u]] = 1
+      continue
+
+    for (_, v) in G.out_edges(u):
+      assert v != u, "No self loops allowed for this calculation."
+      if idx[v] < len(subsets):
+        A[idx[u], idx[v]] += 1 / G.out_degree(u)
+      else:
+        for w in subsets - {None}:
+          A[idx[u], idx[w]] -= 1 / G.out_degree(u)
+        b[idx[u]] -= 1 / G.out_degree(u)
+
+    A[idx[u], idx[u]] -= sum(
+      1 / G.out_degree(v)
+      for (v, _) in G.in_edges(u)
+    )
+
+  fp = np.linalg.solve(A, b)
+  fp_dict = {
+    u: fractions.Fraction.from_float(fp[idx[u]]).limit_denominator(6**9)
+    for u in subsets - {None}
+  }
+  fp_dict[loner] = 1-sum(fp_dict.values())
+  return fp_dict
+
+      
+
+def custom_graph():
+  N = 10
+  G = nx.DiGraph()
+  for i in range(N):
+    G.add_edge(i, (i+1)%N)
+
+  return G
+
+
 if __name__ == '__main__':
+  G = custom_graph()
+  fp = fixation_probabilities(G)
+  for u in G.nodes():
+    print(f"fp({u})={fp[u]}")
 
   # tournament()
   # N = 7
@@ -597,4 +872,7 @@ if __name__ == '__main__':
   # tournament(yield_all_digraph6(Path(f"data/eulerian-oriented/eulerian{N}.d6")))
   # tournament(generate_eulerians(N))
   # plot_potentials()
-  plot_fans()
+  # plot_fans()
+  # plot_r_potential_boundaries()
+  # custom_graph_absorptions()
+  # plot_drifts()

@@ -12,12 +12,12 @@ import math
 from halo import Halo
 
 import matplotlib
-matplotlib.use("tkagg")
+#matplotlib.use("tkagg")
 import matplotlib.pyplot as plt
 
 N = 10
-TRIALS = 100
-TRIALS_PER_GRAPH = 1_00
+TRIALS = 10_000
+TRIALS_PER_GRAPH = 1
 MAX_NUMBER_STEPS = 10_000_000_000_000_000
 MAX_LOOPS_WITHOUT_UPDATE = 100
 
@@ -141,102 +141,41 @@ def num_steps_til_absorption(population: Moran) -> int:
   else:
     raise ValueError(f"did not absorb after '{MAX_NUMBER_STEPS}'")
 
+
+def generate_cycles(n: int):
+  # Directed cycle.
+  G: nx.DiGraph = nx.DiGraph()
+  for idx in range(n):
+    G.add_edge(idx, (idx+1) % n)
+
+  Np = 6
+  for idx in range(Np):
+    G.add_edge(idx+(n-1), (n-1) + (idx+1) % Np)
+
+  return G
+
 if __name__ == '__main__':
-  R = 1.1
+  R = 1
+  TRIALS = 1000
+  ns = list(range(1, 21))
+  all_steps = []
   avg_steps = []
-  avg_balances = []
-  ns = [int(x) for x in np.linspace(start=4, stop=N, num=2)]
-  ns = [5]
-  print(ns)
   for n in ns:
-    all_steps = []
-    all_balances = []
-    slow_outlier, slow_outlier_step, slow_outlier_rng = None, 0, None
-    num_gen_graphs = 0
-    pbar_gen_graphs = tqdm(total=TRIALS, desc='graphs')
-    while num_gen_graphs < TRIALS:
-      # G = generate_directed_gnp_graph(n=n)
-      G = generate_eulerian_graph(n, rho=1/3)
-      if G is None:
-        continue
-      initial_graph = G.copy()
-      rng = random.Random()
-      steps_for_G = []
-      trials, loops_without_update = 0, 0
-      pbar = tqdm(total=TRIALS_PER_GRAPH, desc=f'particular graph #{num_gen_graphs}')
-      while trials < TRIALS_PER_GRAPH and loops_without_update < MAX_LOOPS_WITHOUT_UPDATE:
-        original_graph = G.copy()
-        initialize_types(original_graph)
-        # print(original_graph.nodes(data=True))
-        # print(original_graph.edges())
-        population = Moran(graph=original_graph, r=R, rng=rng)
-        try:
-          # with Halo("waiting for fixation..."):
-          steps_for_G.append(num_steps_til_fixation(population))
-          trials += 1
-          loops_without_update = 0
-          pbar.update()
-        except ValueError as e:
-          loops_without_update += 1
-          # print(num_gen_graphs, trials)
-          # nx.draw(original_graph, with_labels=True)
-          # plt.show()
-          # input()
-          # print(original_graph.graph)
-          continue
+    steps = []
+    for _ in tqdm(range(TRIALS)):
+      G = generate_cycles(n)
+      initialize_types(G)
+      population = Moran(graph=G, r=R)
+      steps.append(num_steps_til_absorption(population))
 
-      if len(steps_for_G) < TRIALS_PER_GRAPH: continue
+    avg_step = np.mean(steps)
+    std_step = np.std(steps)
+    avg_steps.append(avg_step)
 
-      pbar_gen_graphs.update()
-      num_gen_graphs += 1
-      # avg steps
-      steps = np.mean(steps_for_G)
-      all_steps.append(steps)
+    print(f"{n=} {avg_step=}, {std_step=}")
+    all_steps.append(steps)
+  # plt.boxplot(all_steps, positions=ns)
+  plt.plot(ns, avg_steps, marker="o")
 
-      if steps > slow_outlier_step:
-        slow_outlier = initial_graph
-        slow_outlier_step = steps
-        slow_outlier_rng = rng
 
-    avg_step = np.mean(all_steps)
-    std_step = np.std(all_steps)
-    avg_steps.append(avg_steps)
-
-    # avg_balance = np.mean(all_balances)
-    # std_balance = np.std(all_balances)
-    # avg_balances.append(avg_balance)
-
-    print(f"{avg_step=}, {std_step=}, {slow_outlier_step=}")
-    # print(f"{avg_balance=}, {std_balance=}, {slow_outlier_balance=}")
-
-    outliers = {
-      'slow': Moran(graph=slow_outlier, r=R, rng=slow_outlier_rng),
-    }
-    for name, example in outliers.items():
-      save_animation(population=copy.deepcopy(example), out_file=f'{name}.gif')
-      input()
-      nx.draw(
-        G=example.graph,
-        # pos=nx.spectral_layout(example),
-        pos=nx.kamada_kawai_layout(example.graph),
-        node_color=[['blue', 'red'][data['type'].value] for _, data in example.graph.nodes(data=True)],
-        with_labels=True, 
-        font_size=6,
-        labels={
-          # node: f"{example.in_degree(node)} --> {node} --> {slow_outlier.out_degree(node)}" 
-          node: f"d{example.graph.in_degree(node)}" 
-          # node: f"{node}"
-          for node in example.graph.nodes
-        },
-      )
-      plt.show()
-      plt.clf()
-      plt.cla()
-      input()
-    # plt.scatter([n]*len(all_steps), all_steps)
-
-  # plt.plot(ns, avg_steps, 'x-')
-  # plt.plot(ns, avg_balances, 'x-')
-  # plt.show()
-
-# print(all_steps)
+  plt.show()
