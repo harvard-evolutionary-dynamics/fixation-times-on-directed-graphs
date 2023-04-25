@@ -856,6 +856,9 @@ def custom_graph():
   for i in range(N):
     G.add_edge(i, (i+1)%N)
 
+  for i in range(N):
+    G.add_edge(i+N-2, N-2+(i+1)%N)
+
   return G
 
 
@@ -867,7 +870,7 @@ if __name__ == '__main__':
     nx.set_node_attributes(G, {u: fp[u]}, "fp")
 
   labels = nx.get_node_attributes(G, 'fp') 
-  nx.draw(G, labels=labels, connectionstyle="arc3,rad=0.1")
+  nx.draw(G, pos=nx.circular_layout(G), labels=labels, connectionstyle="arc3,rad=0.1")
   plt.show()
 
   # tournament()
