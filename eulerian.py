@@ -864,6 +864,11 @@ if __name__ == '__main__':
   fp = fixation_probabilities(G)
   for u in G.nodes():
     print(f"fp({u})={fp[u]}")
+    nx.set_node_attributes(G, {u: fp[u]}, "fp")
+
+  labels = nx.get_node_attributes(G, 'fp') 
+  nx.draw(G, labels=labels, connectionstyle="arc3,rad=0.1")
+  plt.show()
 
   # tournament()
   # N = 7
