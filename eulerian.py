@@ -851,28 +851,198 @@ def fixation_probabilities(G: nx.DiGraph):
       
 
 def custom_graph():
-  N = 10
+  N = 30
   G = nx.DiGraph()
   for i in range(N):
     G.add_edge(i, (i+1)%N)
 
+  k = 5
   for i in range(N):
-    G.add_edge(i+N-2, N-2+(i+1)%N)
+    G.add_edge(i+N-k, N-k+(i-1)%N)
 
   return G
 
 
-if __name__ == '__main__':
-  G = custom_graph()
-  fp = fixation_probabilities(G)
-  for u in G.nodes():
-    print(f"fp({u})={fp[u]}")
-    nx.set_node_attributes(G, {u: fp[u]}, "fp")
+def fps():
+  G: nx.Graph = nx.star_graph()
+  N = 5
+  for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+    # if is_undirected(G): continue
+    G = nx.star_graph(N).to_directed()
+    fp = fixation_probabilities(G)
+    for u in G.nodes():
+      # print(f"fp({u})={fp[u]}")
+      nx.set_node_attributes(G, {u: fp[u]}, "fp")
 
-  labels = nx.get_node_attributes(G, 'fp') 
-  nx.draw(G, pos=nx.circular_layout(G), labels=labels, connectionstyle="arc3,rad=0.1")
+    labels = nx.get_node_attributes(G, 'fp') 
+
+    fig = plt.figure()
+    ax = plt.gca()
+    ax.set_title(f"N={len(G)}")
+    str_values = ", ".join([f"{u} -> {str(fp[u])}" for u in G.nodes()])
+    print(f"edges={G.edges()}, values={{{str_values}}}")
+    nx.draw(G, pos=nx.planar_layout(G), ax=ax, labels=labels, connectionstyle="arc3,rad=0.1")
+    plt.show()
+    break
+
+def symbolic_stuff():
+  from sympy import symbols, solve, simplify
+  N = 3
+  V = tuple(range(N))
+  vec = symbols(f'x:{N}', real=True, nonnegative=True)
+  matrix = symbols(f"A:{N}:{N}", integer=True, nonnegative=True)
+
+  x = vec
+  A = tuple(
+    matrix[i*N:i*N+N]
+    for i in V
+  )
+
+  eqs = []
+  eqs.append(sum(x)-1)
+  eqs.extend([
+    1/(sum(A[u][v]for v in V)) * sum(A[u][v]*x[v] for v in V)
+    - x[u] * sum(A[v][u]/sum(A[v][w] for w in V) for v in V)
+    for u in V
+  ])
+
+  solutions = solve(eqs, x, dict=True)
+  for k, v in solutions[0].items():
+    print(k, simplify(v))
+
+
+  assumptions = []
+  assumptions.extend([
+    [
+      sum(A[u][v] for v in V),
+      sum(A[v][u] for v in V),
+    ]
+    for u in V
+  ])
+
+from statistics import mean
+
+if __name__ == '__main__':
+  from utils import networkx_to_pepa_format
+  from pepa import g2degs, g2mat, cftime
+  N = 4
+  R = 1
+  for G_nx in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+    G = networkx_to_pepa_format(G_nx)
+    degs = g2degs(G)
+    mat = g2mat(G, degs, R)
+    cfts = cftime(mat)
+    print(cfts)
+    input()
+
+
+def does_fp_only_depend_on_incoming_degrees():
+  N = 4
+  for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+    fp = fixation_probabilities(G)
+    for v, vp in itertools.product(G.nodes(), repeat=2):
+      if G.in_degree(v) != G.in_degree(vp): continue
+      if v == vp: continue
+      v_ins = sorted(G.out_degree(u) for u, _ in G.in_edges(v))
+      vp_ins = sorted(G.out_degree(up) for up, _ in G.in_edges(vp))
+      v_fp = fp[v]
+      vp_fp = fp[vp]
+
+      if v_ins == vp_ins:
+        if v_fp == vp_fp:
+          print("hurray!")
+        else:
+          print(":((((")
+          print(f"{v=}, {vp=}, {v_ins=}, {vp_ins=}")
+          print(fp)
+          nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
+          plt.show()
+
+
+
+def lol():
+  xs = []
+  fpls = []
+  fpus = []
+  fps_lowers = []
+  fps_avgs = []
+  fps_uppers = []
+  for N in range(1, 50):
+    G = nx.DiGraph()
+    for i in range(N):
+      for j in range(N):
+        if i != j:
+          G.add_edge(i, j)
+
+    G.add_edge(N, 0)
+    G.add_edge(N-1, N)
+
+    leps = 0
+    ueps = 0
+
+    data = []
+    davg_sum = 0
+    for v in G.nodes():
+      in_vertices = [G.out_degree(u) for (u, _) in G.in_edges(v)]
+      davg = mean(in_vertices)
+      davg_sum += davg
+      dmin = min(in_vertices)
+      dmax = max(in_vertices)
+      # (1-eps)*davg <= dmin   ==>   1 - dmin/davg <= eps
+      leps = max(leps, 1-dmin/davg)
+      # (1+eps)*davg >= dmax   ==>   dmax/davg - 1 <= eps
+      ueps = max(ueps, dmax/davg - 1)
+      # local_eps = max(leps, ueps)
+      data.append([v, leps, ueps, davg])
+      # print(f"(1-{leps})*{davg} <= {dmin} <= {davg} <= {dmax} <= (1+{ueps})*{davg}")
+    
+    num_edges = G.number_of_edges()
+    print(f"{davg_sum=}, {num_edges=}")
+    for datum in data:
+      v, leps, ueps, davg = datum
+      ufpl = (1-leps)*davg
+      ufpu = (1+ueps)*davg
+      print(f"{ufpl=} {davg=} {ufpu=}")
+      datum.extend([ufpl, ufpu])
+
+    slb = sum(ufpu for _, _, _, _, _, ufpu in data)
+    sub = sum(ufpl for _, _, _, _, ufpl, _ in data)
+    min_fpl = np.inf
+    max_fpu = 0
+    for v, _, _, davg, ufpl, ufpu in data:
+      fpl = ufpl / sub
+      fpu = ufpu / slb
+      min_fpl = min(min_fpl, fpl)
+      max_fpu = max(max_fpu, fpu)
+
+      print(f"{fpl} <= fp({v}) <= {fpu}, {davg=}")
+    # print(f"so {(1-eps)/((1+eps)*N)} <= fp <= {(1+eps)/(1-eps)}")
+    # input()
+    xs.append(N)
+    fpls.append(min_fpl)
+    fpus.append(max_fpu)
+
+    fp = fixation_probabilities(G)
+    fps_lowers.append(min(fp.values()))
+    fps_avgs.append(mean(fp.values()))
+    fps_uppers.append(max(fp.values()))
+    print()
+    # nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
+    # plt.show()
+
+  log = lambda ys: [-np.log(float(y)) for y in ys]
+  # plt.plot(xs, log(fpls), label='lower bound')
+  # plt.plot(xs, log(fpus), label='upper bound')
+  plt.plot(xs, log(fps_lowers), label='actual lower fp')
+  plt.plot(xs, log(fps_avgs), label='actual average fp')
+  plt.plot(xs, log(fps_uppers), label='actual upper fp')
+  # plt.yscale('log')
+  plt.legend()
   plt.show()
 
+
+  # fps()
+  # G = custom_graph()
   # tournament()
   # N = 7
   # tournament((G for G in yield_all_digraph6(Path(f"data/directed-oriented/direct{N}.d6")) if nx.is_strongly_connected(G)))

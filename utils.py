@@ -110,3 +110,7 @@ def yield_all_digraph6(path: Path):
         if not len(line):
           continue
         yield parse_digraph6(line)
+
+def networkx_to_pepa_format(G: nx.Graph):
+  N, M = G.number_of_nodes(), G.number_of_edges()
+  return [(N, M), *G.edges()]
