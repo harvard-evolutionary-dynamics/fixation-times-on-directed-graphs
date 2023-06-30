@@ -16,6 +16,9 @@ from typing import DefaultDict, Dict, Generic, Iterable, List, Tuple, TypeVar, S
 
 from utils import yield_all_digraph6
 
+from utils import networkx_to_pepa_format
+from pepa import g2degs, g2mat, cftime
+
 def eulerian(N):
   G = nx.DiGraph()
   G.add_nodes_from(range(N))
@@ -65,7 +68,6 @@ def _eulerian(N, i, j, G: nx.DiGraph, acc_deg, last_deg):
     G.add_edge(i, j)
     yield from _eulerian(N, i, j+1, G, acc_deg+1, last_deg)
     G.remove_edge(i, j)
-
 
 def deg_seq(G: nx.DiGraph):
   return tuple(
@@ -254,7 +256,9 @@ def draw(
   time: float,
   *G_draw_args,
   mutants: Optional[Set[int]] = None,
-  with_stg: bool = True,
+  with_stg: bool = False,
+  with_labels: bool = False,
+  save: bool = True,
   **G_draw_kwargs,
 ) -> None:
   print(f"{prefix} {r=}, {time=}, {G.edges()=}")
@@ -269,11 +273,14 @@ def draw(
     if not mutants or node not in mutants
     else 'red'
     for node in G.nodes()
-  ]
-  nx.draw(G, node_color=node_colors, with_labels=True, *G_draw_args, **G_draw_kwargs)
+  ] if mutants else None
+  nx.draw(G, node_color=node_colors, with_labels=with_labels, *G_draw_args, **G_draw_kwargs)
   if with_stg:
     plt.subplot(num_subplots, 1, 2)
     draw_stg(G)
+
+  if save:
+    plt.savefig(f'charts/{prefix}-N{N}-r{r}.png', dpi=300)
 
   plt.show()
 
@@ -284,29 +291,30 @@ def generate_eulerians(N):
       by_degree_seq[d].append(G)
       yield G
 
-def tournament(eulerian_generator):
+def tournament(generator, type, *args, rs=(1.1,), k=1, show=True, interactive=False, invert=False, **kwargs):
   count = 0
-  K = 1
-  SHOW = True
-  INTERACTIVE = False
+  K = k
+  SHOW = show
+  INTERACTIVE = interactive
   # r -> (time, G)
   max_exp_abs_time_by_r: DefaultDict[float, MaxExamples[float, nx.DiGraph]] = defaultdict(
-    lambda: MaxExamples(K, invert=False)
+    lambda: MaxExamples(K, invert=invert)
   )
-  for G in eulerian_generator:
-      for r in (1.1,):
+  for G in generator:
+      for r in rs:
         time = expected_absorption_time_single_random_mutant(G, r)
         if max_exp_abs_time_by_r[r].add(time, G) and SHOW and INTERACTIVE:
-          draw(G, "Update!", len(G), r, time, pos=nx.circular_layout(G), connectionstyle="arc3,rad=0.1")
+          draw(G, "Update!", len(G), r, time, pos=nx.circular_layout(G), connectionstyle="arc3,rad=0.1", *args, **kwargs)
 
       count += 1
   
   print(f"{count=}")
 
+  extreme = "fastest" if invert else "slowest"
   if SHOW:
     for r, examples in max_exp_abs_time_by_r.items():
       for (time, _, G) in examples.get():
-        draw(G, "Winner!", N, r, time, pos=nx.planar_layout(G), connectionstyle="arc3,rad=0.1")
+        draw(G, f"{type}-{extreme}", len(G), r, time, pos=nx.kamada_kawai_layout(G), connectionstyle="arc3,rad=0.1", *args, **kwargs)
 
 def argmin_k(a: np.array, k: int = 1, idxs = None):
   if idxs is None:
@@ -555,6 +563,14 @@ def degree_variance(G: nx.DiGraph):
 def is_undirected(G: nx.DiGraph):
   return all((v, u) in G.edges() for (u, v) in G.edges())
 
+def is_oriented(G: nx.DiGraph):
+  return all(
+    not (
+      (u, v) in G.edges() and (v, u) in G.edges()
+    )
+    for (u, v) in G.edges()
+  )
+
 def is_good(ps: List[float]):
   return all(p >= 0 for p in ps)
 
@@ -755,18 +771,43 @@ def plot_potentials():
   print(f"{total_count=}")
   plt.show()
 
-def plot_fans():
-  for r in (0.1, 0.5, 0.9, 1.0, 1.1, 1.5, 100, 1_000, 10_000, 100_000):
-    times = []
-    for b in range(1, 10+1):
-      time = fan_solution(B=b, r=r)
-      times.append(time)
-    plt.plot(times, marker="o", label=f"{r=}")
+def plot_fans(N):
+  Ns = list(range(1, N+1))
+  data = []
+  for blades in Ns:
+    print(blades)
+    for r in (1., 1.1, 1.5, 100.): # (0.1, 0.5, 0.9, 1.0, 1.1, 1.5, 100, 1_000, 10_000, 100_000):
+      time = fan_solution(B=blades, r=r)
+      data.append((blades, time, r))
+    # plt.plot(times, marker="o", label=f"{r=}")
 
-  plt.xlabel("# blades")
-  plt.ylabel("time")
-  plt.title("Fan size and r vs time")
-  plt.legend()
+  df = pd.DataFrame(data, columns=["Number of blades (b)", "Absorption time (t)", "Reproductive Fitness (r)"])
+  plot = sns.lineplot(
+    # kind="line",
+    data=df,
+    x="Number of blades (b)",
+    y="Absorption time (t)",
+    hue="Reproductive Fitness (r)",
+    palette="Paired",
+    # units="graph idx",
+    # estimator=None,
+    # facet_kws={"ylim": (23.698, 23.705)},
+    # style="counterexample",
+    marker="o",
+    # style="logic",
+    linestyle="--",
+    # dashes=True,
+  )
+
+  style(plot)
+
+  plt.xscale('log')
+  plt.yscale('log')
+  ax = plt.gca()
+  # ax.set_xticks(Ns)
+
+  plt.xticks(rotation=-45) 
+  plt.savefig(f'charts/fans-r-vs-at-{N}.png', dpi=300)
   plt.show()
 
   # print(f"{time=}")
@@ -805,6 +846,9 @@ def custom_graph_absorptions():
     for extreme in ('max', 'min')[::+1]:
       for rank, (mutants, time) in enumerate(extremes[extreme], start=1):
         draw(G, f"{extreme} {rank=} {num_mutants=}", N, R, time=time, mutants=mutants, with_stg=False, pos=nx.circular_layout(G), connectionstyle="arc3,rad=0.1")
+
+def stationary_probabilities(G: nx.DiGraph):
+  return nx.pagerank(G)
 
 def fixation_probabilities(G: nx.DiGraph):
   """Compute fixation probabilities under neutral evolution."""
@@ -885,6 +929,7 @@ from statistics import mean
 import seaborn as sns
 import pandas as pd
 sns.set_theme()
+sns.set_style("whitegrid", {'axes.grid' : False})
 
 def temperature(G: nx.DiGraph, v):
   return sum(1/G.out_degree(u) for (u, _) in G.in_edges(v))
@@ -893,20 +938,24 @@ def fp_vs_cftime(N: int):
   from utils import networkx_to_pepa_format
   from pepa import g2degs, g2mat, cftime, fprob
   data = []
+  count = 0
   for G_nx in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
     if not nx.is_strongly_connected(G_nx): continue
+    count += 1
     G = networkx_to_pepa_format(G_nx)
     degs = g2degs(G)
     undirected = is_undirected(G_nx)
-    for r in (0.1, 0.5, 1., 3.): # np.linspace(start=0.1, stop=10, num=4):
+    oriented = is_oriented(G_nx)
+    for r in (0.5, 1., 1.1, 2.): # np.linspace(start=0.1, stop=10, num=4):
       # temps = [1/temperature(G_nx, v) for v in G_nx.nodes()]
       temps = [1] * N
       mat = g2mat(G, degs, r)
       cft = np.average(cftime(mat), weights=temps)
       fp = np.average(fprob(mat), weights=temps)
-      data.append((fp, cft, r, undirected, G_nx.number_of_edges()))
+      type_ = 'undirected' if undirected else 'oriented' if oriented else 'directed'
+      data.append((fp, cft, r, type_, G_nx.number_of_edges()))
 
-  df = pd.DataFrame(data, columns=["fixation probability", "fixation time", "r", "undirected", "num edges"])
+  df = pd.DataFrame(data, columns=["fixation probability", "fixation time", "r", "type", "num edges"])
   # plt.scatter(fps_, cftimes, s=2)
   sns.lmplot(
     data=df,
@@ -914,13 +963,15 @@ def fp_vs_cftime(N: int):
     y="fixation time",
     # aspect="num edges",
     # markers="undirected",
-    hue="undirected",
+    scatter_kws={'alpha': 0.1},
+    hue="type",
     col="r",
     col_wrap=2,
     sharex=False,
     sharey=True,
     fit_reg=False,
   )
+  print(f"{count=}")
   # sns.relplot(
   #   data=tips,
   #   x="total_bill", y="tip", col="time",
@@ -1001,45 +1052,69 @@ from statistics import mean
 
 
 def monotonicity_of_ft(N):
-  from utils import networkx_to_pepa_format
-  from pepa import g2degs, g2mat, cftime
   data = []
-  for idx, G_nx in enumerate(yield_all_digraph6(Path(f"data/directed/direct{N}.d6"))):
+  example_graph = None
+  for graph_idx, G_nx in enumerate(yield_all_digraph6(Path(f"data/directed/direct{N}.d6"))):
     if not nx.is_strongly_connected(G_nx): continue
     G = networkx_to_pepa_format(G_nx)
     degs = g2degs(G)
     accs = []
-    for r in np.linspace(start=0.1, stop=5, num=30):
+    mat_1 = g2mat(G, degs, 1)
+    cfts_1 = cftime(mat_1)
+    for r in np.linspace(start=1, stop=1.30, num=10):
       mat = g2mat(G, degs, r)
       cfts = cftime(mat)
-      ft = np.average(cfts)
-      accs.append((idx, r, ft))
+      for node_idx in range(N):
+        data.append((graph_idx, r, cfts[node_idx] / cfts_1[node_idx], node_idx, False))
 
-    mat = g2mat(G, degs, 1)
-    cfts = cftime(mat)
-    ft = np.average(cfts)
-    accs.append((idx, 1, ft))
-    counterexample = ft < max(accs, key=lambda t: t[2])[2]
-    for acc in accs:
-      data.append(acc + (counterexample,))
-      # print(data)
+    # for acc in accs:
+    #   data.append(acc + (False,))
+    #   print(acc[0])
+    # for node_idx in range(N):
+    #   accs.append((graph_idx, 1, cfts[node_idx], node_idx))
+      # counterexample = cfts[node_idx] < max(accs, key=lambda t: t[2])[2]
+      # if counterexample and graph_idx == 9:
+      #   example_graph = G_nx
+      #   for acc in accs:
+      #     if acc[3] == 0:
+      #       data.append(acc + (counterexample,))
+      #     # print(data)
     
 
 
 
-  df = pd.DataFrame(data, columns=["graph idx", "r", "fixation time", "counterexample"])
-  sns.lineplot(
+  df = pd.DataFrame(data, columns=["graph idx", "r", "normalized fixation time", "node", "counterexample"])
+  sns.relplot(
+    kind="line",
+    col="node",
+    col_wrap=2,
     data=df,
-    x="r", y="fixation time", hue="counterexample", units="graph idx",
+    x="r",
+    y="normalized fixation time",
+    # hue="counterexample",
+    units="graph idx",
     estimator=None,
-    style="counterexample",
-    markers=True,
+    # facet_kws={"ylim": (23.698, 23.705)},
+    # style="counterexample",
+    # markers=True,
     #, dashes=False,
+    
   )
-  height = df["fixation time"].max()
-  plt.plot([1, 1], [0, height], linewidth=0.5, linestyle='--')
+  # height = df["normalized fixation time"].max()
+  # plt.plot([1, 1], [0, height], linewidth=0.5, linestyle='--')
+  plt.ticklabel_format(useOffset=False)
+  plt.savefig(f'charts/normalized-r-vs-ft-{N}.png', dpi=300)
 
-  plt.savefig(f'charts/r-vs-ft-{N}.png', dpi=300)
+  # plt.figure()
+  # nx.draw(
+  #   example_graph,
+  #   pos=nx.kamada_kawai_layout(example_graph),
+  #   with_labels=False,
+  #   connectionstyle="arc3,rad=0.1",
+  #   node_color=["red"] + ["blue"] * 3,
+  # )
+  # plt.savefig(f'charts/example-graph-r-vs-ft-{N}.png', dpi=300, transparent=True)
+
   # plt.title(f"r vs expected fixation time, {N=}")
   # plt.xlabel("r")
   # plt.ylabel("expected fixation time")
@@ -1070,9 +1145,6 @@ def does_fp_only_depend_on_incoming_degrees():
           print(fp)
           nx.draw(G, pos=nx.circular_layout(G), with_labels=True, connectionstyle="arc3,rad=0.1")
           plt.show()
-
-
-
 
 def lol():
   xs = []
@@ -1154,7 +1226,6 @@ def lol():
   plt.legend()
   plt.show()
 
-
 def laplacian(G: nx.DiGraph):
   A = nx.adjacency_matrix(G)
   D = np.diag([
@@ -1177,20 +1248,352 @@ def laplacians():
     nx.draw(G, with_labels=True, pos=nx.spectral_layout(G), connectionstyle="arc3,rad=0.1")
     plt.show()
 
-if __name__ == '__main__':
+def both_stationaries(G: nx.DiGraph):
+  A = nx.adjacency_matrix(G)
+  D = np.diag([G.out_degree(v) for v in G.nodes()])
+  T = np.diag([temperature(G, v) for v in G.nodes()])
+  zeros = np.zeros(shape=(len(G),))
 
-  # fp_vs_cftime(3)
+  L = np.eye(len(G)) - np.invert(D)@A
+  # Lt = T@D - A
+
+  lams, pis = np.linalg.eig(L)
+  # ltams, phis = np.linalg.eig(Lt)
+  print(nx.is_regular(G))
+  print(pis)
+  print("-------")
+  # print(phis)
+  print(T.diagonal())
+  print("=========")
+
+def epsilon(G: nx.DiGraph):
+  eps = 0
+  for v in G.nodes():
+    for (_, w) in G.out_edges(v):
+      normalization = (1/G.out_degree(v)) * sum(1/temperature(G, z) for (_, z) in G.out_edges(v))
+      b = (1/temperature(G, w))/normalization
+      eps = max(abs(b-1), eps)
+  return eps
+
+def max_degree(G: nx.DiGraph):
+  assert _is_eulerian(G)
+  return max(G.out_degree(v) for v in G.nodes())
+
+def min_degree(G: nx.DiGraph):
+  assert _is_eulerian(G)
+  return min(G.out_degree(v) for v in G.nodes())
+
+def biased_stationary(G: nx.DiGraph):
+  A = nx.adjacency_matrix(G)
+  D = np.diag([G.out_degree(v) for v in G.nodes()])
+  T = np.diag([temperature(G, v) for v in G.nodes()])
+  print(A)
+  print(D)
+  print(T)
+
+  B = np.linalg.inv(T)@np.linalg.inv(D)@A
+
+  x_un = np.linalg.eig(B)
+  print(x_un)
+  input()
+  norm = np.linalg.norm(x_un) ** 2
+  x = x_un / norm
+  return x
+
+def normalize(dictionary):
+  denom = sum(dictionary.values())
+  return {
+    k: v / denom
+    for k, v in dictionary.items()
+  }
+
+def to_floats(dictionary):
+  return {
+    k: float(v)
+    for k, v in dictionary.items()
+  }
+
+def derp():
+  N = 8
+  for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+    if is_undirected(G) or nx.is_regular(G): continue
+    xs = []
+    ys = []
+    fixations = fixation_probabilities(G)
+    stationaries = {
+      k: fractions.Fraction.from_float(v).limit_denominator(10**6)
+      for k, v in stationary_probabilities(G).items()
+    }
+    custom_stationaries = normalize({
+      # k: v * temperature(G, k)**-1 / sum(temperature(G, l)**-1 for (_, l) in G.out_edges(k))
+      # k: temperature(G, k)**-1 * v**-1
+      k: (1/v) # * temperature(G, k)**-1 * sum(1/G.out_degree(l) for (_, l) in G.out_edges(k))
+      for k, v in stationaries.items()
+    })
+    print("edges:", G.edges())
+    print("stationary probabilities:", to_floats(stationaries))
+    print("???:", to_floats(fixations))
+    print("==============")
+
+    if True:
+      for i in range(N):
+        xs.append(float(fixations[i]))
+        ys.append(float(custom_stationaries[i]))
+    
+      _, ax = plt.subplots(2, 2)
+      ax[0, 0].bar(list(range(N)), xs, label='fp', color='green')
+      ax[1, 0].bar(list(range(N)), ys, label='pi', color='red')
+      plt.legend()
+      nx.draw(
+        G,
+        pos=nx.kamada_kawai_layout(G),
+        with_labels=True,
+        connectionstyle="arc3,rad=0.1",
+        node_size=[100*N*temperature(G, v) for v in G.nodes()],
+        ax=ax[0, 1],
+      )
+      nx.draw(
+        G,
+        pos=nx.kamada_kawai_layout(G),
+        with_labels=True,
+        connectionstyle="arc3,rad=0.1",
+        node_size=[100*N*sum(1/G.out_degree(w) for (_, w) in G.out_edges(v)) for v in G.nodes()],
+        ax=ax[1, 1],
+      )
+      manager = plt.get_current_fig_manager()
+      manager.full_screen_toggle()
+      plt.show()
+      # plt.clf()
+
+
+def has_P_property(G: nx.DiGraph):
+  for v in G.nodes():
+    delta_v = None
+    for (u, _) in G.in_edges(v):
+      odeg_u = G.out_degree(u)
+      if delta_v is not None and odeg_u != delta_v: return False
+      delta_v = odeg_u
+  return True
+
+def symbolicc():
+  from sympy import symbols, Eq, solve
+  N = 5
+  # for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")):
+  for G in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
+    if not nx.is_strongly_connected(G): continue
+    if not has_P_property(G): continue
+    print("============")
+    print(G.edges())
+    ys = symbols([f'y_{v}' for v in range(N)])
+    odegs = symbols([f'do_{v}' for v in range(N)])
+    idegs = symbols([f'di_{v}' for v in range(N)])
+    Ap = nx.adjacency_matrix(G)
+    # A = [
+    #   symbols([f'A_{i}{j}' for j in range(N)])
+    #   for i in range(N)
+    # ]
+    equations = [
+      Eq(idegs[i], sum(Ap[j,i] for j in range(N)))
+      for i in range(N)
+    ] + [
+      Eq(odegs[i], sum(Ap[i,j] for j in range(N)))
+      for i in range(N)
+    ] + [
+      Eq(
+        ys[v] * sum(Ap[u,v]/odegs[u] for u in range(N)),
+        sum([Ap[v,w]*ys[w]/odegs[v] for w in range(N)]),
+      )
+      for v in range(N)
+    ] + [
+      Eq(sum(ys[v] for v in range(N)), 1)
+    ]
+    # [
+    #   Eq(sum(A[i][k] for k in range(N)), sum(A[k][i] for k in range(N)))
+    #   for i in range(N)
+    # ]
+    # [
+    #   Eq(A[i][j]**2, A[i][j])
+    #   for i in range(N)
+    #   for j in range(N)
+    # ] +
+    #   Eq(A[i][j], Ap[i, j])
+    #   for i in range(N)
+    #   for j in range(N)
+    # ] +
+    # [
+    #   Eq(Ap[i, i], 0) for i in range(N)
+    # ] +
+    #+ [
+    #   Eq(
+    #     ys[v] * sum(1/degs[u] for (u, _) in G.in_edges(v)),
+    #     sum([ys[w]/degs[w] for (_, w) in G.out_edges(v)]),
+    #   )
+    #   for v in G.nodes()
+    # ]
+    # if not nx.is_strongly_connected(G): continue
+    solution = solve(equations, ys)
+    for k, v in solution.items():
+      print(f"{k}: {v}")
+
+    nx.draw(
+      G,
+      pos=nx.kamada_kawai_layout(G),
+      with_labels=True,
+      connectionstyle="arc3,rad=0.1",
+    )
+    plt.show()
+
+def two_layer_graph(N):
+  G = nx.DiGraph()
+  layer1 = [i+1 for i in range(N+1)]
+  layer2 = [i+(N+1)+1 for i in range(N+1)]
+  left = 0
+  right = (2*N+4)-1
+
+  G.add_edge(left, layer1[0])
+  G.add_edge(layer2[0], right)
+  G.add_edge(right, layer2[0])
+
+  G.add_edge(layer1[-1], layer2[-1])
+  G.add_edge(layer2[-1], layer1[-1])
+  for i in range(N):
+    G.add_edge(layer2[i], layer1[i])
+    G.add_edge(layer1[i], layer1[i+1])
+    G.add_edge(layer1[i+1], layer1[i])
+    G.add_edge(layer2[i], layer2[i+1])
+    G.add_edge(layer2[i+1], layer2[i])
+
+  return G
+
+def trial_cftime(G: nx.DiGraph, S: Set, r: float):
+  N = len(G)
+  V = G.nodes()
+  mutants = set()
+  mutants |= S
+  steps = 0
+
+  while V - mutants:
+    k = len(mutants)
+    if random.random() < r*k/(N + (r-1)*k):
+      birther = random.choice(list(mutants))
+    else:
+      birther = random.choice(list(V - mutants))
+
+    dier = random.choice([w for (_, w) in G.out_edges(birther)])
+    assert birther != dier
+    if birther in mutants:
+      mutants.add(dier)
+    elif dier in mutants:
+      mutants.remove(dier)
+    
+    steps += 1
+  return steps
+
+
+def sample(fn, times):
+  yield from (fn() for _ in range(times))
+
+def style(plot):
+  fig = plt.gcf()
+  # fig.patch.set_alpha(0)
+  # Add a border around the plot
+  ax = plt.gca()
+  # ax.spines['top'].set_visible(True)
+  # ax.spines['bottom'].set_visible(True)
+  # ax.spines['left'].set_visible(True)
+  # ax.spines['right'].set_visible(True)
+
+  # # Customize the border color and thickness
+  # ax.spines['top'].set_color('black')
+  # ax.spines['bottom'].set_color('black')
+  # ax.spines['left'].set_color('black')
+  # ax.spines['right'].set_color('black')
+  # ax.spines['top'].set_linewidth(1.0)
+  # ax.spines['bottom'].set_linewidth(1.0)
+  # ax.spines['left'].set_linewidth(1.0)
+  # ax.spines['right'].set_linewidth(1.0)
+  ax.grid(False)
+
+  # sns.move_legend(plot, "upper right", bbox_to_anchor=(0.8, 0.95), borderaxespad=0)
+
+
+def two_layer_fixation_time(N, samples=1000, overwrite=False, use_existing_file=False):
+  file_name = f"data/two-layer-graph-estimated-N-vs-ft-{N}.pkl"
+  if use_existing_file:
+    df = pd.read_pickle(file_name)
+  else:
+    data = []
+    Ns = list(range(1, N+1))
+    for N in Ns:
+      print(N)
+      G = two_layer_graph(N)
+      for r in ((1.1,) if N <= 10 else ()) + (100,):
+        for time in sample(lambda: trial_cftime(G, {0}, r), samples):
+          data.append((N, r, time))
+
+    df = pd.DataFrame(data, columns=["Population size (N)", "r", "Fixation time (t)"])
+    if overwrite:
+      df.to_pickle(file_name)
+
+  plot = sns.lineplot(
+    # kind="line",
+    data=df,
+    x="Population size (N)",
+    y="Fixation time (t)",
+    hue="r",
+    palette="Paired",
+    # units="graph idx",
+    # estimator=None,
+    # facet_kws={"ylim": (23.698, 23.705)},
+    # style="counterexample",
+    marker="o",
+    # style="logic",
+    linestyle="--",
+    # dashes=True,
+  )
+
+  style(plot)
+  plt.gca().set_xticks(Ns)
+
+  # plt.ticklabel_format(useOffset=False)
+  plt.yscale('log')
+  plt.savefig(f'charts/two-layer-graph-estimated-N-vs-ft-{N}.png', dpi=300)
+  plt.show()
+
+
+  # G = networkx_to_pepa_format(G_nx)
+  # degs = g2degs(G)
+  # mat = g2mat(G, degs, 1)
+  # cfts = cftime(mat)
+  # print(cfts)
+
+  # ys = []
+  # N = 4
+  # for G in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
+  #   if not nx.is_strongly_connected(G): continue
+  #   biased_stationary(G)
+    # stationary_probabilities()
+  #   # if max_degree(G) / min_degree(G) > 5/4: continue
+  #   # eps = epsilon(G)
+  #   # print(eps)
+  #   print(biased_stationary(G))
+  #   print(fixation_probabilities(G))
+  #   # ys.append(eps)
+  
+  # # plt.hist(ys, bins=10)
+  # # plt.show()
+
   # does_fp_only_depend_on_incoming_degrees()
-  monotonicity_of_ft(4)
+  # monotonicity_of_ft(4)
   # fps()
   # G = custom_graph()
   # tournament()
-  # N = 6
+  # N = 7
   # tournament((
   #   G
-  #   for G in yield_all_digraph6(Path(f"data/directed/direct{N}.d6"))
+  #   for G in yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6"))
   #   if nx.is_strongly_connected(G)
-  # ))
+  # ), type="eulerian", invert=False)
   # tournament(yield_all_digraph6(Path(f"data/eulerian/euler{N}.d6")))
   # tournament(yield_all_digraph6(Path(f"data/eulerian-oriented/eulerian{N}.d6")))
   # tournament(generate_eulerians(N))
@@ -1199,3 +1602,10 @@ if __name__ == '__main__':
   # plot_r_potential_boundaries()
   # custom_graph_absorptions()
   # plot_drifts()
+  # monotonicity_of_ft(4)
+
+if __name__ == '__main__':
+  # fp_vs_cftime(5)
+  # plot_fans(20)
+  # two_layer_fixation_time(20)
+  monotonicity_of_ft(4)
