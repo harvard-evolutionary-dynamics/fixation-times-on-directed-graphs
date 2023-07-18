@@ -928,17 +928,30 @@ import math
 from statistics import mean
 import seaborn as sns
 import pandas as pd
-sns.set_theme()
+sns.set_theme(font_scale=2, rc={'text.usetex' : True})
 sns.set_style("whitegrid", {'axes.grid' : False})
 
 def temperature(G: nx.DiGraph, v):
   return sum(1/G.out_degree(u) for (u, _) in G.in_edges(v))
 
+from matplotlib.backend_bases import PickEvent
+
 def fp_vs_cftime(N: int):
   from utils import networkx_to_pepa_format
   from pepa import g2degs, g2mat, cftime, fprob
   data = []
+  Gs = []
   count = 0
+
+  def on_pick(event: PickEvent):
+    print(event)
+    print(event.artist)
+    idx = event.ind[0]
+    H = Gs[idx]
+    plt.figure()
+    nx.draw(H, pos=nx.kamada_kawai_layout(H), with_labels=True, connectionstyle="arc3,rad=0.1")
+    plt.show()
+
   for G_nx in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
     if not nx.is_strongly_connected(G_nx): continue
     count += 1
@@ -946,8 +959,9 @@ def fp_vs_cftime(N: int):
     degs = g2degs(G)
     undirected = is_undirected(G_nx)
     oriented = is_oriented(G_nx)
-    for r in (0.5, 1., 1.1, 2.): # np.linspace(start=0.1, stop=10, num=4):
+    for r in (1.1,):# , 2.): # np.linspace(start=0.1, stop=10, num=4):
       # temps = [1/temperature(G_nx, v) for v in G_nx.nodes()]
+      Gs.append(G_nx)
       temps = [1] * N
       mat = g2mat(G, degs, r)
       cft = np.average(cftime(mat), weights=temps)
@@ -955,22 +969,46 @@ def fp_vs_cftime(N: int):
       type_ = 'undirected' if undirected else 'oriented' if oriented else 'directed'
       data.append((fp, cft, r, type_, G_nx.number_of_edges()))
 
-  df = pd.DataFrame(data, columns=["fixation probability", "fixation time", "r", "type", "num edges"])
+  df = pd.DataFrame(data, columns=["Fixation probability (p)", "Fixation time (t)", "r", "type", "num edges"])
+  # df.sort_values(by="type")
+  df = df[df.type != 'directed']# .sort_values(by="type")
   # plt.scatter(fps_, cftimes, s=2)
-  sns.lmplot(
+  plot = sns.relplot(
     data=df,
-    x="fixation probability",
-    y="fixation time",
+    x="Fixation probability (p)",
+    y="Fixation time (t)",
     # aspect="num edges",
     # markers="undirected",
-    scatter_kws={'alpha': 0.1},
+    # scatter_kws={'alpha': 0.5, "s": 8, 'linewidths': 0},
+    facet_kws={'sharey': True, 'sharex': False},
     hue="type",
+    # hue_order=["oriented", "undirected", "directed"],
     col="r",
     col_wrap=2,
-    sharex=False,
-    sharey=True,
-    fit_reg=False,
+    picker=4,
+    # sharex=False,
+    # sharey=True,
+    # fit_reg=False,
   )
+  for ax in plt.gcf().get_axes():
+    ax.set(xlabel='Fixation probability, $\\rho$', ylabel='Fixation time, $T$')
+    ax.figure.canvas.mpl_connect("pick_event", on_pick)
+
+  # Define the z-order for different hues
+  zorder_dict = {'oriented': 1, 'undirected': 2, 'directed': 3}
+
+  # Iterate over the scatter plot artists
+  for artist in plot.legend.legendHandles:
+    # Get the hue label
+    hue_label = artist.get_label()
+    
+    # Get the corresponding z-order value from the dictionary
+    zorder = zorder_dict.get(hue_label)
+    
+    # Set the z-order for the artist
+    artist.set_zorder(zorder)
+
+  style(plot)
   print(f"{count=}")
   # sns.relplot(
   #   data=tips,
@@ -979,9 +1017,6 @@ def fp_vs_cftime(N: int):
   # )
   plt.savefig(f'charts/fp-vs-ft-{N}.png', dpi=300)
   plt.show()
-
-
-
 
 def fps():
   G = custom_graph()
@@ -1054,6 +1089,8 @@ from statistics import mean
 def monotonicity_of_ft(N):
   data = []
   example_graph = None
+  Rs = list(np.linspace(start=1, stop=1.30, num=10))
+  print(len(Rs))
   for graph_idx, G_nx in enumerate(yield_all_digraph6(Path(f"data/directed/direct{N}.d6"))):
     if not nx.is_strongly_connected(G_nx): continue
     G = networkx_to_pepa_format(G_nx)
@@ -1061,66 +1098,144 @@ def monotonicity_of_ft(N):
     accs = []
     mat_1 = g2mat(G, degs, 1)
     cfts_1 = cftime(mat_1)
-    for r in np.linspace(start=1, stop=1.30, num=10):
+    for r in Rs:
       mat = g2mat(G, degs, r)
       cfts = cftime(mat)
       for node_idx in range(N):
-        data.append((graph_idx, r, cfts[node_idx] / cfts_1[node_idx], node_idx, False))
+        data.append(((graph_idx, node_idx), r, cfts[node_idx] / cfts_1[node_idx], node_idx, G, 0.5))
 
-    # for acc in accs:
-    #   data.append(acc + (False,))
-    #   print(acc[0])
-    # for node_idx in range(N):
-    #   accs.append((graph_idx, 1, cfts[node_idx], node_idx))
-      # counterexample = cfts[node_idx] < max(accs, key=lambda t: t[2])[2]
-      # if counterexample and graph_idx == 9:
-      #   example_graph = G_nx
-      #   for acc in accs:
-      #     if acc[3] == 0:
-      #       data.append(acc + (counterexample,))
-      #     # print(data)
-    
+  # Find extreme values.
+  extremes = (
+    max(d[2] for d in data if d[1] == Rs[-1]),
+    min(d[2] for d in data if d[1] == Rs[-1])
+  )
 
+  up = set()
+  for d in data:
+    if d[0] in up: continue
+    if d[2] <= 1: continue
+    up.add(d[0])
+  
+  print(f"num trajectories that increase at some point: {len(up)}")
 
+  extreme_graph_idxs = set()
+  for i in range(len(data)):
+    if (r := data[i][1]) != Rs[-1]: continue
+    normalized_ft = data[i][2]
+    if normalized_ft not in extremes: continue
+    graph_idx = data[i][0]
+    extreme_graph_idxs.add(graph_idx)
+    print(graph_idx, data[i][-2], normalized_ft, data[i][-3])
+  
+  for i in range(len(data)):
+    graph_idx = data[i][0]
+    if graph_idx not in extreme_graph_idxs: continue
+    data[i] = data[i][:-1] + (1.0,)
 
-  df = pd.DataFrame(data, columns=["graph idx", "r", "normalized fixation time", "node", "counterexample"])
-  sns.relplot(
-    kind="line",
-    col="node",
-    col_wrap=2,
+  df = pd.DataFrame(data, columns=["graph idx", "Relative fitness (r)", "Normalized fixation time (t)", "node", "pepa", "color"])
+  print(df)
+  plot = sns.lineplot(
+    # kind="line",
+    # col="node",
+    # col_wrap=2,
     data=df,
-    x="r",
-    y="normalized fixation time",
+    x="Relative fitness (r)",
+    y="Normalized fixation time (t)",
     # hue="counterexample",
     units="graph idx",
     estimator=None,
+    palette="light:b",
+    hue="color",
     # facet_kws={"ylim": (23.698, 23.705)},
     # style="counterexample",
     # markers=True,
     #, dashes=False,
-    
+    legend=False,
   )
+
+  style(plot)
+  ax = plt.gca()
+  handles, labels = ax.get_legend_handles_labels()
+  # ax.legend(handles, ['$r = 1.1$', '$r = 100$'], title='')
+  ax.set(xlabel='Relative fitness, $r$', ylabel='Normalized fixation time, $T$')
+
   # height = df["normalized fixation time"].max()
   # plt.plot([1, 1], [0, height], linewidth=0.5, linestyle='--')
   plt.ticklabel_format(useOffset=False)
-  plt.savefig(f'charts/normalized-r-vs-ft-{N}.png', dpi=300)
+  plt.savefig(f'charts/normalized-r-vs-ft-{N}.png', dpi=300, bbox_inches="tight")
+  plt.show()
 
-  # plt.figure()
-  # nx.draw(
-  #   example_graph,
-  #   pos=nx.kamada_kawai_layout(example_graph),
-  #   with_labels=False,
-  #   connectionstyle="arc3,rad=0.1",
-  #   node_color=["red"] + ["blue"] * 3,
-  # )
-  # plt.savefig(f'charts/example-graph-r-vs-ft-{N}.png', dpi=300, transparent=True)
+
+
+def example_monotonicity_of_ft(N): 
+  data = []
+  example_graph = None
+  Rs = list(np.linspace(start=1, stop=1.05, num=100))
+  print(len(Rs))
+  for graph_idx, G_nx in enumerate(yield_all_digraph6(Path(f"data/directed/direct{N}.d6"))):
+    if not nx.is_strongly_connected(G_nx): continue
+    G = networkx_to_pepa_format(G_nx)
+    degs = g2degs(G)
+    accs = []
+    mat_1 = g2mat(G, degs, 1)
+    cfts_1 = cftime(mat_1)
+    for r in Rs:
+      mat = g2mat(G, degs, r)
+      cfts = cftime(mat)
+      for node_idx in range(N):
+        if graph_idx == 9 and node_idx == 0:
+          example_graph = G_nx
+          data.append(((graph_idx, node_idx), r, cfts[node_idx], node_idx, G, 0.5))
+
+  df = pd.DataFrame(data, columns=["graph idx", "Relative fitness (r)", "Fixation time (t)", "node", "pepa", "color"])
+  print(df)
+  plot = sns.lineplot(
+    # kind="line",
+    # col="node",
+    # col_wrap=2,
+    data=df,
+    x="Relative fitness (r)",
+    y="Fixation time (t)",
+    # hue="counterexample",
+    units="graph idx",
+    estimator=None,
+    # palette="light:b",
+    # hue="color",
+    # ylim=(23.698, 23.705),
+    # style="counterexample",
+    # markers=True,
+    #, dashes=False,
+    legend=False,
+  )
+  plt.ylim(23.698, 23.705)
+
+  # plot.fig.set_size_inches(15,15)
+  style(plot)
+  ax = plt.gca()
+  handles, labels = ax.get_legend_handles_labels()
+  ax.set(xlabel='Relative fitness, $r$', ylabel='Fixation time, $T$')
+
+  # height = df["normalized fixation time"].max()
+  # plt.plot([1, 1], [0, height], linewidth=0.5, linestyle='--')
+  plt.ticklabel_format(useOffset=False)
+  plt.savefig(f'charts/r-vs-ft-{N}.png', dpi=300, bbox_inches="tight")
 
   # plt.title(f"r vs expected fixation time, {N=}")
   # plt.xlabel("r")
   # plt.ylabel("expected fixation time")
   # for rs, fts in zip(rss, ftss):
   #   plt.plot(rs, fts, marker='o')
-  plt.show()
+  # plt.show()
+  plt.figure()
+  nx.draw(
+    example_graph,
+    pos=nx.kamada_kawai_layout(example_graph),
+    with_labels=False,
+    connectionstyle="arc3,rad=0.1",
+    node_color=["red"] + ["blue"] * 3,
+  )
+  plt.savefig(f'charts/example-graph-r-vs-ft-{N}.png', dpi=300, transparent=True, bbox_inches="tight")
+
 
 def does_fp_only_depend_on_incoming_degrees():
   N = 4
@@ -1465,7 +1580,10 @@ def two_layer_graph(N):
 
   return G
 
-def trial_cftime(G: nx.DiGraph, S: Set, r: float):
+def trial_cftime(G: nx.DiGraph, S: Optional[Set], r: float):
+  if S is None:
+    S = {random.choice(list(G.nodes()))}
+
   N = len(G)
   V = G.nodes()
   mutants = set()
@@ -1473,6 +1591,7 @@ def trial_cftime(G: nx.DiGraph, S: Set, r: float):
   steps = 0
 
   while V - mutants:
+    if not mutants: return None
     k = len(mutants)
     if random.random() < r*k/(N + (r-1)*k):
       birther = random.choice(list(mutants))
@@ -1491,39 +1610,48 @@ def trial_cftime(G: nx.DiGraph, S: Set, r: float):
 
 
 def sample(fn, times):
-  yield from (fn() for _ in range(times))
+  count = 0
+  while count < times:
+    if (ans := fn()) is not None:
+      yield ans
+      count += 1
 
 def style(plot):
   fig = plt.gcf()
   # fig.patch.set_alpha(0)
   # Add a border around the plot
-  ax = plt.gca()
-  # ax.spines['top'].set_visible(True)
-  # ax.spines['bottom'].set_visible(True)
-  # ax.spines['left'].set_visible(True)
-  # ax.spines['right'].set_visible(True)
+  # ax = plt.gca()
+  for i, ax in enumerate(fig.get_axes()):
+    ax.spines['top'].set_visible(True)
+    ax.spines['bottom'].set_visible(True)
+    ax.spines['left'].set_visible(True)
+    ax.spines['right'].set_visible(True)
 
-  # # Customize the border color and thickness
-  # ax.spines['top'].set_color('black')
-  # ax.spines['bottom'].set_color('black')
-  # ax.spines['left'].set_color('black')
-  # ax.spines['right'].set_color('black')
-  # ax.spines['top'].set_linewidth(1.0)
-  # ax.spines['bottom'].set_linewidth(1.0)
-  # ax.spines['left'].set_linewidth(1.0)
-  # ax.spines['right'].set_linewidth(1.0)
-  ax.grid(False)
+    # Customize the border color and thickness
+    ax.spines['top'].set_color('black')
+    ax.spines['bottom'].set_color('black')
+    ax.spines['left'].set_color('black')
+    ax.spines['right'].set_color('black')
+    ax.spines['top'].set_linewidth(1.0)
+    ax.spines['bottom'].set_linewidth(1.0)
+    ax.spines['left'].set_linewidth(1.0)
+    ax.spines['right'].set_linewidth(1.0)
+    ax.grid(False)
+    # handles, labels = ax.get_legend_handles_labels()
+    # ax.legend(handles, [['$r = 1.1$', '$r = 2$'][i]], title='')
 
-  # sns.move_legend(plot, "upper right", bbox_to_anchor=(0.8, 0.95), borderaxespad=0)
+  # Remove legend title.
+  # handles, labels = ax.get_legend_handles_labels()
+  # ax.legend(handles=handles[1:], labels=labels[1:])
 
 
-def two_layer_fixation_time(N, samples=1000, overwrite=False, use_existing_file=False):
+def two_layer_fixation_time(N, samples=1000, overwrite=True, use_existing_file=True):
   file_name = f"data/two-layer-graph-estimated-N-vs-ft-{N}.pkl"
+  Ns = list(range(1, N+1))
   if use_existing_file:
     df = pd.read_pickle(file_name)
   else:
     data = []
-    Ns = list(range(1, N+1))
     for N in Ns:
       print(N)
       G = two_layer_graph(N)
@@ -1531,15 +1659,15 @@ def two_layer_fixation_time(N, samples=1000, overwrite=False, use_existing_file=
         for time in sample(lambda: trial_cftime(G, {0}, r), samples):
           data.append((N, r, time))
 
-    df = pd.DataFrame(data, columns=["Population size (N)", "r", "Fixation time (t)"])
+    df = pd.DataFrame(data, columns=["Population size", "r", "Fixation time"])
     if overwrite:
       df.to_pickle(file_name)
 
   plot = sns.lineplot(
     # kind="line",
     data=df,
-    x="Population size (N)",
-    y="Fixation time (t)",
+    x="Population size",
+    y="Fixation time",
     hue="r",
     palette="Paired",
     # units="graph idx",
@@ -1552,14 +1680,166 @@ def two_layer_fixation_time(N, samples=1000, overwrite=False, use_existing_file=
     # dashes=True,
   )
 
+  ax = plt.gca()
+  handles, labels = ax.get_legend_handles_labels()
+  ax.legend(handles, ['$r = 1.1$', '$r = 100$'], title='')
+  ax.set(xlabel='Population size, $N$', ylabel='Fixation time, $T$')
+       
+
   style(plot)
-  plt.gca().set_xticks(Ns)
+  # plt.gca().set_xticks(Ns)
 
   # plt.ticklabel_format(useOffset=False)
   plt.yscale('log')
-  plt.savefig(f'charts/two-layer-graph-estimated-N-vs-ft-{N}.png', dpi=300)
+  plt.savefig(f'charts/two-layer-graph-estimated-N-vs-ft-{N}.png', dpi=300, bbox_inches="tight")
   plt.show()
 
+def vortex_graph(N):
+  assert N > 3
+  G = nx.DiGraph()
+
+  down = N//2
+  up = down + N%2
+  # print(down, up)
+
+  for b in range(2, 1+down):
+    G.add_edge(-1, -b)
+    G.add_edge(-b, +1)
+
+  for b in range(2, 1+up):
+    G.add_edge(+1, +b)
+    G.add_edge(+b, -1)
+
+  # nx.draw(G)
+  # nx.draw(
+  #   G,
+  #   pos=nx.circular_layout(G),
+  #   with_labels=False,
+  #   connectionstyle="arc3,rad=0.1",
+  # )
+  plt.show()
+  return G
+
+def vortex_fixation_time(N, samples=1000, overwrite=True, use_existing_file=True):
+  Ns = list(range(4, N+1))
+  file_name = f"data/vortex-graph-estimated-N-vs-ft-{N}.pkl"
+  Rs = (1.1, 100)
+  if use_existing_file:
+    df = pd.read_pickle(file_name)
+  else:
+    data = []
+    for N in Ns:
+      print(N)
+      G = vortex_graph(N)
+      for r in Rs: 
+        for time in sample(lambda: trial_cftime(G, None, r), samples):
+          data.append((N, r, time))
+
+    df = pd.DataFrame(data, columns=["Population size", "r", "Fixation time"])
+    if overwrite:
+      df.to_pickle(file_name)
+
+  df = df[df['r'].isin(Rs)]
+  plot = sns.lineplot(
+    # kind="line",
+    data=df,
+    x="Population size",
+    y="Fixation time",
+    hue="r",
+    palette="Paired",
+    # units="graph idx",
+    # estimator=None,
+    # facet_kws={"ylim": (23.698, 23.705)},
+    # style="counterexample",
+    marker="o",
+    # style="logic",
+    linestyle="--",
+    # dashes=True,
+  )
+
+  ax = plt.gca()
+  handles, labels = ax.get_legend_handles_labels()
+  ax.legend(handles, [f'${r = }$' for r in Rs], title='')
+  ax.set(xlabel='Population size, $N$', ylabel='Fixation time, $T$')
+
+  style(plot)
+
+  # plt.ticklabel_format(useOffset=False)
+  plt.xscale('log')
+  plt.yscale('log')
+  from matplotlib.ticker import ScalarFormatter
+  ax.xaxis.set_major_formatter(ScalarFormatter()) 
+  ax.xaxis.set_minor_formatter(ScalarFormatter())
+  ax.set_xticks([n for n in Ns if n != 10 and n % 10 == 0])
+  plt.savefig(f'charts/vortex-graph-estimated-N-vs-ft-{N}.png', dpi=300, bbox_inches="tight")
+  plt.show()
+
+def fan_graph(B):
+  G = nx.DiGraph()
+
+  for b in range(1, B+1):
+    G.add_edge(0, -b)
+    G.add_edge(-b, +b)
+    G.add_edge(+b, 0)
+
+  return G
+
+def fan_fixation_time(B, samples=1000, overwrite=True, use_existing_file=True):
+  Bs = list(range(1, B+1))
+  file_name = f"data/fan-graph-estimated-B-vs-ft-{B}.pkl"
+  Rs = (1.1, 100)
+  if use_existing_file:
+    df = pd.read_pickle(file_name)
+  else:
+    data = []
+    for B in Bs:
+      print(B)
+      G = fan_graph(B)
+      for r in Rs:
+        for time in sample(lambda: trial_cftime(G, None, r), samples):
+          data.append((B, r, time))
+
+    df = pd.DataFrame(data, columns=["Blades", "r", "Fixation time"])
+    if overwrite:
+      df.to_pickle(file_name)
+
+  df = df[df['r'].isin(Rs)]
+  df['N'] = 2*df['Blades'] + 1
+  plot = sns.lineplot(
+    # kind="line",
+    data=df,
+    x="N",
+    y="Fixation time",
+    hue="r",
+    palette="Paired",
+    # units="graph idx",
+    # estimator=None,
+    # facet_kws={"ylim": (23.698, 23.705)},
+    # style="counterexample",
+    marker="o",
+    # style="logic",
+    linestyle="--",
+    # dashes=True,
+  )
+
+  ax = plt.gca()
+  handles, labels = ax.get_legend_handles_labels()
+  ax.legend(handles, [f'${r = }$' for r in Rs], title='')
+  ax.set(xlabel='Population size, $N$', ylabel='Fixation time, $T$')
+
+  style(plot)
+  ax = plt.gca()
+  # plt.gca().set_xticks([2*B+1 for B in Bs])
+
+  plt.xscale('log')
+  plt.yscale('log')
+  # ax.ticklabel_format(useOffset=False, style='plain')
+  from matplotlib.ticker import ScalarFormatter
+  plt.gca().xaxis.set_major_formatter(ScalarFormatter()) 
+  plt.gca().xaxis.set_minor_formatter(ScalarFormatter())
+  ax.set_xticks([2*B+1 for B in Bs if (2*B+1) % 10 == 0 and ()])
+  plt.savefig(f'charts/fan-graph-estimated-B-vs-ft-{B}.png', dpi=300, bbox_inches="tight")
+  plt.show()
 
   # G = networkx_to_pepa_format(G_nx)
   # degs = g2degs(G)
@@ -1607,5 +1887,12 @@ def two_layer_fixation_time(N, samples=1000, overwrite=False, use_existing_file=
 if __name__ == '__main__':
   # fp_vs_cftime(5)
   # plot_fans(20)
-  # two_layer_fixation_time(20)
-  monotonicity_of_ft(4)
+  # two_layer_fixation_time(20, samples=1000)
+  # example_monotonicity_of_ft(4)
+  # monotonicity_of_ft(4)
+  # fan_fixation_time(20)
+  # vortex_graph(3)
+  vortex_fixation_time(20)
+
+  ...
+  # Plotting with Seaborn
