@@ -1892,8 +1892,8 @@ def fan_fixation_time(B, samples=1000, overwrite=True, use_existing_file=True):
 if __name__ == '__main__':
   # fp_vs_cftime(5)
   # plot_fans(20)
-  two_layer_fixation_time(20, samples=1000)
-  # example_monotonicity_of_ft(4)
+  # two_layer_fixation_time(20, samples=1000)
+  example_monotonicity_of_ft(4)
   # monotonicity_of_ft(4)
   # fan_fixation_time(20)
   # vortex_graph(3)
