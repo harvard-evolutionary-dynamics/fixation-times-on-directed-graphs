@@ -952,6 +952,8 @@ def fp_vs_cftime(N: int):
     nx.draw(H, pos=nx.kamada_kawai_layout(H), with_labels=True, connectionstyle="arc3,rad=0.1")
     plt.show()
 
+  Rs = (1.1,) # , 2.)
+  noise = lambda: 0 # random.normalvariate(mu=0, sigma=.0001)
   for G_nx in yield_all_digraph6(Path(f"data/directed/direct{N}.d6")):
     if not nx.is_strongly_connected(G_nx): continue
     count += 1
@@ -959,7 +961,7 @@ def fp_vs_cftime(N: int):
     degs = g2degs(G)
     undirected = is_undirected(G_nx)
     oriented = is_oriented(G_nx)
-    for r in (1.1,):# , 2.): # np.linspace(start=0.1, stop=10, num=4):
+    for r in Rs: # np.linspace(start=0.1, stop=10, num=4):
       # temps = [1/temperature(G_nx, v) for v in G_nx.nodes()]
       Gs.append(G_nx)
       temps = [1] * N
@@ -967,11 +969,14 @@ def fp_vs_cftime(N: int):
       cft = np.average(cftime(mat), weights=temps)
       fp = np.average(fprob(mat), weights=temps)
       type_ = 'undirected' if undirected else 'oriented' if oriented else 'directed'
-      data.append((fp, cft, r, type_, G_nx.number_of_edges()))
+      data.append((fp + noise(), cft + noise(), r, type_, G_nx.number_of_edges()))
 
   df = pd.DataFrame(data, columns=["Fixation probability (p)", "Fixation time (t)", "r", "type", "num edges"])
-  # df.sort_values(by="type")
-  df = df[df.type != 'directed']# .sort_values(by="type")
+  # Change z-order.
+  df = df.sort_values(by="type", key=lambda s: s.apply(lambda t: ("oriented", "undirected", "directed").index(t)), ascending=False)
+  # df = df[df.type != 'directed']# .sort_values(by="type")
+  
+  print(df["type"])
   # plt.scatter(fps_, cftimes, s=2)
   plot = sns.relplot(
     data=df,
@@ -982,7 +987,7 @@ def fp_vs_cftime(N: int):
     # scatter_kws={'alpha': 0.5, "s": 8, 'linewidths': 0},
     facet_kws={'sharey': True, 'sharex': False},
     hue="type",
-    # hue_order=["oriented", "undirected", "directed"],
+    hue_order=["undirected", "directed", "oriented"],
     col="r",
     col_wrap=2,
     picker=4,
@@ -1887,12 +1892,12 @@ def fan_fixation_time(B, samples=1000, overwrite=True, use_existing_file=True):
 if __name__ == '__main__':
   # fp_vs_cftime(5)
   # plot_fans(20)
-  # two_layer_fixation_time(20, samples=1000)
+  two_layer_fixation_time(20, samples=1000)
   # example_monotonicity_of_ft(4)
   # monotonicity_of_ft(4)
   # fan_fixation_time(20)
   # vortex_graph(3)
-  vortex_fixation_time(20)
+  # vortex_fixation_time(20)
 
   ...
   # Plotting with Seaborn
