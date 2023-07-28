@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
-import fractions
-import functools
-import heapq
-import itertools
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import random
-import operator
 
-from collections import defaultdict
-from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
-from typing import DefaultDict, Dict, Generic, Iterable, List, Tuple, TypeVar, Set, Optional
 
 from utils import yield_all_digraph6
 

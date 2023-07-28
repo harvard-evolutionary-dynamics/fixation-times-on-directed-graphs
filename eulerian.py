@@ -1893,9 +1893,9 @@ if __name__ == '__main__':
   # fp_vs_cftime(5)
   # plot_fans(20)
   # two_layer_fixation_time(20, samples=1000)
-  example_monotonicity_of_ft(4)
+  # example_monotonicity_of_ft(4)
   # monotonicity_of_ft(4)
-  # fan_fixation_time(20)
+  fan_fixation_time(20)
   # vortex_graph(3)
   # vortex_fixation_time(20)
 
